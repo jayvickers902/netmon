@@ -26,6 +26,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- eero per-device usage would have been permanently unavailable in practice. `device_rates()`
+  raised on any device missing `up_rate`/`down_rate`, and the collector maps every exception to
+  "unavailable" — so one offline or idle device, which routinely carries no rate fields, blanked
+  per-device usage for the entire network. Unusable devices are now skipped, and
+  `eero_devices_reporting` records how many did report so a real schema change stays visible in
+  the data instead of hiding behind `available = 1`.
+- Speedtest could run far past its own time budget. The budget was enforced per phase rather
+  than per run, and the upload phase ignored it entirely, POSTing the whole payload as one
+  materialised buffer. A slow uplink could overrun a 120 s budget by more than 2×, which is
+  precisely the condition the budget exists to prevent. One deadline now covers the whole run,
+  the upload streams in chunks, and the reported rate is over bytes actually sent rather than
+  bytes intended.
+- The eero collector's success path shipped untested — metric names, units, source tags and the
+  per-device fan-out were unverified. Now covered, along with the upload deadline and the
+  exhausted-budget path.
 - Windows ICMP probe reported every host as unreachable. `IcmpCreateFile` returns a 64-bit
   HANDLE, but no `restype` was declared, so ctypes truncated it to 32 bits; the truncated
   value is not `INVALID_HANDLE_VALUE`, so it passed validation and every `IcmpSendEcho` then

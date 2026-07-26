@@ -135,6 +135,12 @@ Rejected sources, recorded so they are not re-litigated:
 
 ## v0.6 — Interface design `[ ]` *(design phase — gated)*
 
+**Ships after v1.0, not before it.** This is a deliberate reordering, recorded rather than done
+silently: v1.0 is entirely non-visual, so building it first means the design review runs against
+a complete and hardened API surface instead of one still being changed underneath it. Auth in
+particular alters what the interface has to account for. The design freeze is the reason the
+swap costs nothing — no UI exists yet to be invalidated.
+
 Everything visual accumulates here. By this point v0.2–v0.5 have produced the full REST surface
 — devices, metrics, events, outages, throughput, alerts — and the dashboard is still the
 deliberately-ugly minimum from v0.2.
