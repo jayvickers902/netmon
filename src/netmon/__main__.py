@@ -13,14 +13,19 @@ from netmon.api.app import create_app
 from netmon.config import NetmonSettings
 from netmon.db import DatabaseBackupError, backup_database, restore_database
 from netmon.probes.eero_cloud import EeroCloudError, EeroCloudProbe, HttpxEeroTransport
+from netmon.service import run_service
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="netmon")
     parser.add_argument(
-        "command", nargs="?", choices=["eero-login", "gen-token", "backup", "restore"]
+        "command",
+        nargs="?",
+        choices=["eero-login", "gen-token", "backup", "restore", "service-run"],
     )
     parser.add_argument("path", nargs="?")
+    parser.add_argument("--working-dir", type=Path)
+    parser.add_argument("--log-dir", type=Path)
     args = parser.parse_args()
     if args.command == "gen-token":
         print(secrets.token_urlsafe(32))
@@ -28,6 +33,10 @@ def main() -> None:
             "Put this value in [api] token or NETMON_API__TOKEN; it is not written automatically."
         )
         return
+    if args.command == "service-run":
+        if args.working_dir is None or args.log_dir is None:
+            parser.error("service-run requires --working-dir and --log-dir")
+        raise SystemExit(run_service(args.working_dir, args.log_dir))
     settings = NetmonSettings()
     if args.command in {"backup", "restore"}:
         if args.path is None:
@@ -42,8 +51,7 @@ def main() -> None:
                     print(f"database restored from {args.path}")
                 else:
                     print(
-                        f"database restored from {args.path}; "
-                        f"old database retained at {displaced}"
+                        f"database restored from {args.path}; old database retained at {displaced}"
                     )
         except DatabaseBackupError as error:
             raise SystemExit(str(error)) from None
