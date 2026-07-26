@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from datetime import UTC, datetime, timedelta
 
 from netmon.db import Store
@@ -49,3 +50,24 @@ def test_health_events_metrics_and_filters(tmp_path):
     assert store.get_event(event_id)["details"]["traceroute"][0]["index"] == 2
     assert store.list_filtered_events(kind="outage_start", start=first)[0]["id"] == event_id
     assert store.list_metrics(kind="latency_rtt_ms", target="1.1.1.1")[0]["value"] == 12.0
+
+
+def test_forward_migration_adds_metric_source_without_losing_samples(tmp_path):
+    path = tmp_path / "old.db"
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY NOT NULL);"
+        "INSERT INTO schema_migrations VALUES (1);"
+        "CREATE TABLE metric(id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, "
+        "target TEXT NOT NULL, unit TEXT NOT NULL, UNIQUE(kind,target,unit));"
+        "CREATE TABLE sample(id INTEGER PRIMARY KEY AUTOINCREMENT, metric_id INTEGER NOT NULL, "
+        "ts REAL NOT NULL, value REAL NOT NULL);"
+        "INSERT INTO metric VALUES (1, 'x', 'target', 'count');"
+        "INSERT INTO sample VALUES (1, 1, 1, 2);"
+    )
+    connection.commit()
+    connection.close()
+    store = Store(path)
+    assert store.list_metrics(kind="x")[0]["source"] == "local"
+    store.persist_samples([Sample("x", "target", "count", datetime.now(UTC), 3, "cloud")])
+    assert len(store.list_metrics(kind="x")) == 2

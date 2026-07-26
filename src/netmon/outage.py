@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from netmon.collectors.base import Clock
 from netmon.config import OutageConfig
@@ -28,6 +28,46 @@ class TargetState:
     @property
     def open(self) -> bool:
         return self.opened_at is not None
+
+
+class HysteresisState(Protocol):
+    failures: int
+    successes: int
+    failure_started_at: datetime | None
+    opened_at: datetime | None
+
+
+def advance_hysteresis(
+    state: HysteresisState,
+    condition: bool,
+    ts: datetime,
+    failures_to_open: int,
+    successes_to_close: int,
+) -> tuple[bool, bool]:
+    """Advance the shared sustained-condition state machine and report transitions."""
+    opened = False
+    closed = False
+    if condition:
+        state.successes = 0
+        if state.opened_at is None:
+            if state.failures == 0:
+                state.failure_started_at = ts
+            state.failures += 1
+            if state.failures >= failures_to_open:
+                state.opened_at = state.failure_started_at
+                opened = True
+    else:
+        state.failures = 0
+        state.failure_started_at = None
+        if state.opened_at is not None:
+            state.successes += 1
+            if state.successes >= successes_to_close:
+                state.opened_at = None
+                state.successes = 0
+                closed = True
+        else:
+            state.successes = min(state.successes + 1, successes_to_close)
+    return opened, closed
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,25 +111,14 @@ class OutageStateMachine:
         self._latest[key] = observation
         if observation.success is True:
             state.last_success = True
-            state.failures = 0
-            if state.open:
-                state.successes += 1
-                if state.successes >= self.successes_to_close:
-                    state.opened_at = None
-                    state.successes = 0
-                    state.failure_started_at = None
-            else:
-                state.successes = min(state.successes + 1, self.successes_to_close)
-                state.failure_started_at = None
+            advance_hysteresis(
+                state, False, observation.ts, self.failures_to_open, self.successes_to_close
+            )
         elif observation.success is False:
             state.last_success = False
-            state.successes = 0
-            if not state.open:
-                if state.failures == 0:
-                    state.failure_started_at = observation.ts
-                state.failures += 1
-                if state.failures >= self.failures_to_open:
-                    state.opened_at = state.failure_started_at
+            advance_hysteresis(
+                state, True, observation.ts, self.failures_to_open, self.successes_to_close
+            )
         return self._aggregate_events(observation.ts)
 
     def record_wan(self, status: WanStatus, ts: datetime) -> list[Event]:

@@ -1,0 +1,67 @@
+"""Opt-in, soft-failing per-device usage collector for eero cloud rates."""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from netmon.collectors.base import Clock, Collector
+from netmon.config import EeroConfig
+from netmon.models import Sample
+from netmon.probes.eero_cloud import EeroCloudError, EeroCloudProbe
+
+
+class EeroUsageCollector(Collector):
+    def __init__(
+        self, probe: EeroCloudProbe, token: str | None, clock: Clock, config: EeroConfig
+    ) -> None:
+        self.probe = probe
+        self.token = token
+        self.clock = clock
+        self.config = config
+
+    @property
+    def name(self) -> str:
+        return "eero_usage"
+
+    @property
+    def interval(self) -> float:
+        return self.config.interval_seconds
+
+    async def collect(self) -> list[Sample]:
+        now = self.clock.now()
+        if not self.token:
+            return [self._unavailable(now)]
+        try:
+            rates = await self.probe.device_rates(self.token)
+        except EeroCloudError:
+            return [self._unavailable(now)]
+        except Exception:
+            # A schema change or unexpected transport failure must not reach the scheduler.
+            return [self._unavailable(now)]
+        samples = [Sample("eero_usage_available", "eero", "boolean", now, 1.0, "eero_cloud")]
+        for rate in rates:
+            samples.extend(
+                (
+                    Sample(
+                        "eero_device_upload_rate",
+                        rate.device_id,
+                        "bytes_per_second",
+                        now,
+                        rate.upload_bytes_per_second,
+                        "eero_cloud",
+                    ),
+                    Sample(
+                        "eero_device_download_rate",
+                        rate.device_id,
+                        "bytes_per_second",
+                        now,
+                        rate.download_bytes_per_second,
+                        "eero_cloud",
+                    ),
+                )
+            )
+        return samples
+
+    @staticmethod
+    def _unavailable(now: datetime) -> Sample:
+        return Sample("eero_usage_available", "eero", "boolean", now, 0.0, "eero_cloud")

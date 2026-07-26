@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS metric (
     kind TEXT NOT NULL,
     target TEXT NOT NULL,
     unit TEXT NOT NULL,
-    UNIQUE (kind, target, unit)
+    source TEXT NOT NULL DEFAULT 'local',
+    UNIQUE (kind, target, unit, source)
 );
 
 CREATE TABLE IF NOT EXISTS sample (
@@ -34,6 +35,17 @@ CREATE TABLE IF NOT EXISTS sample (
 );
 
 CREATE INDEX IF NOT EXISTS sample_metric_ts ON sample(metric_id, ts);
+
+CREATE TABLE IF NOT EXISTS sample_rollup (
+    metric_id INTEGER NOT NULL REFERENCES metric(id) ON DELETE CASCADE,
+    bucket_seconds INTEGER NOT NULL,
+    ts REAL NOT NULL,
+    value REAL NOT NULL,
+    sample_count INTEGER NOT NULL,
+    PRIMARY KEY (metric_id, bucket_seconds, ts)
+);
+
+CREATE INDEX IF NOT EXISTS sample_rollup_metric_ts ON sample_rollup(metric_id, bucket_seconds, ts);
 
 CREATE TABLE IF NOT EXISTS event (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

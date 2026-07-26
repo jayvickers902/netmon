@@ -15,4 +15,41 @@ def migrate(connection: sqlite3.Connection) -> None:
         schema = files("netmon.db").joinpath("schema.sql").read_text(encoding="utf-8")
         connection.executescript(schema)
         connection.execute("INSERT INTO schema_migrations(version) VALUES (1)")
+    if 2 not in applied:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(metric)").fetchall()}
+        if "source" not in columns:
+            connection.execute("PRAGMA foreign_keys=OFF")
+            connection.execute("ALTER TABLE metric RENAME TO metric_old")
+            connection.execute("ALTER TABLE sample RENAME TO sample_old")
+            connection.execute(
+                "CREATE TABLE metric (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, "
+                "target TEXT NOT NULL, unit TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'local', "
+                "UNIQUE (kind, target, unit, source))"
+            )
+            connection.execute(
+                "INSERT INTO metric(id, kind, target, unit, source) "
+                "SELECT id, kind, target, unit, 'local' FROM metric_old"
+            )
+            connection.execute(
+                "CREATE TABLE sample (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "metric_id INTEGER NOT NULL REFERENCES metric(id) ON DELETE CASCADE, "
+                "ts REAL NOT NULL, value REAL NOT NULL)"
+            )
+            connection.execute("INSERT INTO sample SELECT id, metric_id, ts, value FROM sample_old")
+            connection.execute("DROP TABLE sample_old")
+            connection.execute("DROP TABLE metric_old")
+            connection.execute("CREATE INDEX sample_metric_ts ON sample(metric_id, ts)")
+            connection.execute("PRAGMA foreign_keys=ON")
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS sample_rollup ("
+            "metric_id INTEGER NOT NULL REFERENCES metric(id) ON DELETE CASCADE,"
+            "bucket_seconds INTEGER NOT NULL, ts REAL NOT NULL, value REAL NOT NULL,"
+            "sample_count INTEGER NOT NULL,"
+            "PRIMARY KEY (metric_id, bucket_seconds, ts))"
+        )
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS sample_rollup_metric_ts "
+            "ON sample_rollup(metric_id, bucket_seconds, ts)"
+        )
+        connection.execute("INSERT INTO schema_migrations(version) VALUES (2)")
     connection.commit()

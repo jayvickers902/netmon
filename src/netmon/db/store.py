@@ -6,10 +6,11 @@ import json
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from netmon.config import RetentionConfig
 from netmon.models import DeviceObservation, Event, Sample
 
 from .migrations import migrate
@@ -53,11 +54,21 @@ class Store:
         with self.connection() as connection:
             for sample in samples:
                 metric = connection.execute(
-                    "INSERT INTO metric(kind, target, unit) VALUES (?, ?, ?) "
-                    "ON CONFLICT(kind, target, unit) DO UPDATE SET kind=excluded.kind "
-                    "RETURNING id",
-                    (sample.metric_kind, sample.target, sample.unit),
+                    "SELECT id FROM metric WHERE kind=? AND target=? AND unit=? AND source=?",
+                    (sample.metric_kind, sample.target, sample.unit, sample.source),
                 ).fetchone()
+                if metric is None:
+                    try:
+                        cursor = connection.execute(
+                            "INSERT INTO metric(kind, target, unit, source) VALUES (?, ?, ?, ?)",
+                            (sample.metric_kind, sample.target, sample.unit, sample.source),
+                        )
+                        metric = (cursor.lastrowid,)
+                    except sqlite3.IntegrityError:
+                        metric = connection.execute(
+                            "SELECT id FROM metric WHERE kind=? AND target=? AND unit=?",
+                            (sample.metric_kind, sample.target, sample.unit),
+                        ).fetchone()
                 assert metric is not None
                 connection.execute(
                     "INSERT INTO sample(metric_id, ts, value) VALUES (?, ?, ?)",
@@ -214,16 +225,24 @@ class Store:
     def list_filtered_events(
         self,
         limit: int = 100,
-        kind: str | None = None,
+        kind: str | tuple[str, ...] | None = None,
         start: datetime | None = None,
         end: datetime | None = None,
+        severity: str | None = None,
     ) -> list[dict[str, Any]]:
         with self.connection() as connection:
             clauses: list[str] = []
             parameters: list[Any] = []
             if kind is not None:
-                clauses.append("kind=?")
-                parameters.append(kind)
+                if isinstance(kind, tuple):
+                    clauses.append(f"kind IN ({','.join('?' for _ in kind)})")
+                    parameters.extend(kind)
+                else:
+                    clauses.append("kind=?")
+                    parameters.append(kind)
+            if severity is not None:
+                clauses.append("severity=?")
+                parameters.append(severity)
             if start is not None:
                 clauses.append("ts>=?")
                 parameters.append(start.timestamp())
@@ -258,6 +277,7 @@ class Store:
         start: datetime | None = None,
         end: datetime | None = None,
         limit: int = 10000,
+        source: str | None = None,
     ) -> list[dict[str, Any]]:
         with self.connection() as connection:
             clauses: list[str] = []
@@ -268,6 +288,9 @@ class Store:
             if target is not None:
                 clauses.append("metric.target=?")
                 parameters.append(target)
+            if source is not None:
+                clauses.append("metric.source=?")
+                parameters.append(source)
             if start is not None:
                 clauses.append("sample.ts>=?")
                 parameters.append(start.timestamp())
@@ -277,7 +300,8 @@ class Store:
             where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
             parameters.append(limit)
             rows = connection.execute(
-                "SELECT metric.kind, metric.target, metric.unit, sample.ts, sample.value "
+                "SELECT metric.kind, metric.target, metric.unit, metric.source, "
+                "sample.ts, sample.value "
                 "FROM sample JOIN metric ON metric.id=sample.metric_id "
                 f"{where} ORDER BY sample.ts ASC LIMIT ?",
                 parameters,
@@ -287,8 +311,120 @@ class Store:
                     "kind": row["kind"],
                     "target": row["target"],
                     "unit": row["unit"],
+                    "source": row["source"],
                     "ts": row["ts"],
                     "value": row["value"],
                 }
                 for row in rows
             ]
+
+    def latest_metric(
+        self,
+        kind: str,
+        target: str | None = None,
+        source: str | None = None,
+    ) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            clauses = ["metric.kind=?"]
+            parameters: list[Any] = [kind]
+            if target is not None:
+                clauses.append("metric.target=?")
+                parameters.append(target)
+            if source is not None:
+                clauses.append("metric.source=?")
+                parameters.append(source)
+            row = connection.execute(
+                "SELECT metric.kind, metric.target, metric.unit, metric.source, sample.ts, "
+                "sample.value FROM sample JOIN metric ON metric.id=sample.metric_id "
+                f"WHERE {' AND '.join(clauses)} ORDER BY sample.ts DESC, sample.id DESC LIMIT 1",
+                parameters,
+            ).fetchone()
+            if row is None:
+                return None
+            return {
+                "kind": row["kind"],
+                "target": row["target"],
+                "unit": row["unit"],
+                "source": row["source"],
+                "ts": row["ts"],
+                "value": row["value"],
+            }
+
+    def list_alerts(
+        self,
+        limit: int = 100,
+        severity: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        return self.list_filtered_events(
+            limit=limit,
+            kind=("alert_triggered", "alert_resolved"),
+            severity=severity,
+            start=start,
+            end=end,
+        )
+
+    def run_retention(self, now: datetime, config: RetentionConfig) -> None:
+        """Roll up and verify each tier before deleting its source rows."""
+        raw_cutoff = (now - timedelta(days=config.raw_days)).timestamp()
+        one_minute_cutoff = (now - timedelta(days=config.rollup_1m_days)).timestamp()
+        five_minute_cutoff = (now - timedelta(days=config.rollup_5m_days)).timestamp()
+        with self.connection() as connection:
+            self._rollup_raw(connection, raw_cutoff)
+            self._rollup_one_minute(connection, one_minute_cutoff)
+            connection.execute(
+                "DELETE FROM sample_rollup WHERE bucket_seconds=300 AND ts<?",
+                (five_minute_cutoff,),
+            )
+
+    @staticmethod
+    def _rollup_raw(connection: sqlite3.Connection, cutoff: float) -> None:
+        groups = connection.execute(
+            "SELECT metric_id, CAST(ts / 60 AS INTEGER) * 60 AS bucket, "
+            "AVG(value) AS value, COUNT(*) AS count FROM sample WHERE ts<? "
+            "GROUP BY metric_id, bucket",
+            (cutoff,),
+        ).fetchall()
+        for row in groups:
+            connection.execute(
+                "INSERT INTO sample_rollup(metric_id, bucket_seconds, ts, value, sample_count) "
+                "VALUES (?, 60, ?, ?, ?) ON CONFLICT(metric_id, bucket_seconds, ts) DO UPDATE "
+                "SET value=excluded.value, sample_count=excluded.sample_count",
+                (row["metric_id"], row["bucket"], row["value"], row["count"]),
+            )
+        for row in groups:
+            verified = connection.execute(
+                "SELECT value, sample_count FROM sample_rollup "
+                "WHERE metric_id=? AND bucket_seconds=60 AND ts=?",
+                (row["metric_id"], row["bucket"]),
+            ).fetchone()
+            if verified is None or verified["sample_count"] != row["count"]:
+                raise RuntimeError("raw sample rollup verification failed")
+        connection.execute("DELETE FROM sample WHERE ts<?", (cutoff,))
+
+    @staticmethod
+    def _rollup_one_minute(connection: sqlite3.Connection, cutoff: float) -> None:
+        groups = connection.execute(
+            "SELECT metric_id, CAST(ts / 300 AS INTEGER) * 300 AS bucket, "
+            "SUM(value * sample_count) / SUM(sample_count) AS value, "
+            "SUM(sample_count) AS count FROM sample_rollup "
+            "WHERE bucket_seconds=60 AND ts<? GROUP BY metric_id, bucket",
+            (cutoff,),
+        ).fetchall()
+        for row in groups:
+            connection.execute(
+                "INSERT INTO sample_rollup(metric_id, bucket_seconds, ts, value, sample_count) "
+                "VALUES (?, 300, ?, ?, ?) ON CONFLICT(metric_id, bucket_seconds, ts) DO UPDATE "
+                "SET value=excluded.value, sample_count=excluded.sample_count",
+                (row["metric_id"], row["bucket"], row["value"], row["count"]),
+            )
+        for row in groups:
+            verified = connection.execute(
+                "SELECT sample_count FROM sample_rollup "
+                "WHERE metric_id=? AND bucket_seconds=300 AND ts=?",
+                (row["metric_id"], row["bucket"]),
+            ).fetchone()
+            if verified is None or verified["sample_count"] != row["count"]:
+                raise RuntimeError("one-minute rollup verification failed")
+        connection.execute("DELETE FROM sample_rollup WHERE bucket_seconds=60 AND ts<?", (cutoff,))
