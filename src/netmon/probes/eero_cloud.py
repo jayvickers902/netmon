@@ -95,7 +95,10 @@ class EeroCloudProbe:
             upload = _number(device, "up_rate", "upload_rate", "upload")
             download = _number(device, "down_rate", "download_rate", "download")
             if not isinstance(device_id, (str, int)) or upload is None or download is None:
-                raise EeroCloudError("eero cloud device response was invalid")
+                # Offline and idle devices routinely carry no rate fields. Failing the whole
+                # poll over one of them would blank per-device usage for the entire network
+                # whenever a single laptop is asleep, so skip the device instead.
+                continue
             result.append(EeroDeviceRate(str(device_id), upload, download))
         return result
 

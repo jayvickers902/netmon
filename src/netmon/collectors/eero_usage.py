@@ -38,7 +38,12 @@ class EeroUsageCollector(Collector):
         except Exception:
             # A schema change or unexpected transport failure must not reach the scheduler.
             return [self._unavailable(now)]
-        samples = [Sample("eero_usage_available", "eero", "boolean", now, 1.0, "eero_cloud")]
+        samples = [
+            Sample("eero_usage_available", "eero", "boolean", now, 1.0, "eero_cloud"),
+            # Devices without rate fields are skipped upstream. Recording how many did report
+            # keeps a silent schema change visible: available stays 1 while this sits at 0.
+            Sample("eero_devices_reporting", "eero", "count", now, float(len(rates)), "eero_cloud"),
+        ]
         for rate in rates:
             samples.extend(
                 (

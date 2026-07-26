@@ -134,6 +134,119 @@ async def test_eero_fixture_malformed_schema_is_sanitized():
         await probe.device_rates("secret-token")
 
 
+@pytest.mark.asyncio
+async def test_eero_success_path_tags_every_per_device_sample(frozen_clock):
+    collector = EeroUsageCollector(
+        FakeEeroProbe([EeroDeviceRate("aa:bb", 10.0, 20.0), EeroDeviceRate("cc:dd", 1.0, 2.0)]),
+        "secret-token",
+        frozen_clock,
+        EeroConfig(),
+    )
+    samples = await collector.collect()
+    assert all(sample.source == "eero_cloud" for sample in samples)
+    rates = {
+        (sample.metric_kind, sample.target): sample.value
+        for sample in samples
+        if sample.metric_kind.startswith("eero_device_")
+    }
+    assert rates == {
+        ("eero_device_upload_rate", "aa:bb"): 10.0,
+        ("eero_device_download_rate", "aa:bb"): 20.0,
+        ("eero_device_upload_rate", "cc:dd"): 1.0,
+        ("eero_device_download_rate", "cc:dd"): 2.0,
+    }
+    assert {sample.unit for sample in samples if sample.metric_kind.startswith("eero_device_")} == {
+        "bytes_per_second"
+    }
+    counts = {s.metric_kind: s.value for s in samples if s.target == "eero"}
+    assert counts == {"eero_usage_available": 1.0, "eero_devices_reporting": 2.0}
+
+
+@pytest.mark.asyncio
+async def test_eero_skips_devices_without_rates_instead_of_failing_the_poll():
+    """One sleeping laptop must not blank per-device usage for the whole network."""
+    transport = EeroFixtureTransport(
+        [
+            {"networks": [{"id": 1}]},
+            {
+                "devices": [
+                    {"mac": "aa:bb", "up_rate": 3, "down_rate": 4},
+                    {"mac": "off:line", "connected": False},
+                    {"mac": "cc:dd", "up_rate": 1, "down_rate": 2},
+                ]
+            },
+        ]
+    )
+    rates = await EeroCloudProbe(transport).device_rates("secret-token")
+    assert rates == [EeroDeviceRate("aa:bb", 3, 4), EeroDeviceRate("cc:dd", 1, 2)]
+
+
+class SteppingClock:
+    """Advances a fixed step on every reading, so elapsed time is deterministic."""
+
+    def __init__(self, step: float) -> None:
+        self.step = step
+        self.value = -step
+
+    def now(self):
+        from datetime import UTC, datetime
+
+        return datetime.now(UTC)
+
+    def monotonic(self) -> float:
+        self.value += self.step
+        return self.value
+
+    async def sleep(self, seconds: float) -> None:
+        self.value += seconds
+
+
+@pytest.mark.asyncio
+async def test_speedtest_upload_stops_at_the_deadline_and_reports_what_it_sent():
+    import httpx
+
+    from netmon.probes.speedtest import HttpxSpeedtestProbe
+
+    uploaded: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            uploaded.append(len(request.content))
+            return httpx.Response(200)
+        return httpx.Response(200, content=b"x" * 4096)
+
+    config = SpeedtestConfig(
+        download_bytes=4096,
+        upload_bytes=10_000_000,
+        max_bytes=10_000_000,
+        total_time_budget_seconds=1.0,
+    )
+    probe = HttpxSpeedtestProbe(SteppingClock(0.01), transport=httpx.MockTransport(handler))
+    result = await probe.run(config)
+
+    assert uploaded, "upload was never attempted"
+    # The budget must truncate the payload rather than letting a slow link run unbounded.
+    assert 0 < uploaded[0] < config.upload_bytes
+    assert result.upload_mbps is not None
+
+
+@pytest.mark.asyncio
+async def test_speedtest_budget_exhausted_before_transfer_yields_no_capacity():
+    import httpx
+
+    from netmon.probes.speedtest import HttpxSpeedtestProbe
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 16)
+
+    # A step larger than the budget means the deadline has passed by the first transfer.
+    probe = HttpxSpeedtestProbe(SteppingClock(5.0), transport=httpx.MockTransport(handler))
+    result = await probe.run(SpeedtestConfig(total_time_budget_seconds=1.0))
+
+    assert result.download_mbps is None
+    assert result.upload_mbps is None
+
+
 def test_psutil_probe_maps_nic_counters(monkeypatch):
     from netmon.probes import host_nic
 
