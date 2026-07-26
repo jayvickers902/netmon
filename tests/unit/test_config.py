@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from netmon.config import NetmonSettings
+from netmon.config import EeroConfig, NetmonSettings, RetentionConfig, SpeedtestConfig
 
 
 def test_defaults_are_safe_without_config(monkeypatch, tmp_path):
@@ -28,3 +28,12 @@ def test_invalid_port_is_rejected(monkeypatch, tmp_path):
     (tmp_path / "netmon.toml").write_text("[server]\nport = 0\n")
     with pytest.raises(ValidationError):
         NetmonSettings()
+
+
+def test_dangerous_phase_intervals_and_tiers_are_rejected():
+    with pytest.raises(ValidationError, match="30"):
+        EeroConfig(interval_seconds=29)
+    with pytest.raises(ValidationError, match="900"):
+        SpeedtestConfig(interval_seconds=899)
+    with pytest.raises(ValidationError, match="ordered"):
+        RetentionConfig(raw_days=30, rollup_1m_days=7, rollup_5m_days=365)

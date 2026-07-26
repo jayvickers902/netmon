@@ -72,7 +72,7 @@ The troubleshooting payoff. This is the phase that earns the tool its keep.
       not minutes later when you finally look. Attached to the outage event
 - [x] `GET /events` and a dashboard timeline
 
-## v0.4 — Bandwidth `[ ]` *(rescoped twice — see both spikes)*
+## v0.4 — Bandwidth `[x]` *(rescoped twice — see both spikes)*
 
 The UPnP spike came back negative: the eero 7 advertises `WANCommonInterfaceConfig` but
 implements none of it — `GetTotalBytesSent`/`GetTotalBytesReceived` are not declared and
@@ -86,12 +86,12 @@ the mobile app uses. That makes it the only source of per-device bandwidth avail
 buying hardware. It comes with real costs (reverse-engineered, cloud-dependent, needs a
 non-Amazon eero account), so it ships **off by default**.
 
-- [ ] `collectors/host_nic.py` — this host's per-NIC and per-process counters via psutil.
+- [x] `collectors/host_nic.py` — this host's per-NIC and per-process counters via psutil.
       Unaffected by either spike, but covers this machine only
-- [ ] `collectors/speedtest.py` — scheduled throughput test, infrequent and opt-in
+- [x] `collectors/speedtest.py` — scheduled throughput test, infrequent and opt-in
       (it saturates the link; running it often would itself cause the problems being measured).
       Measures *capacity*, not utilisation — it does not substitute for WAN counters
-- [ ] `probes/eero_cloud.py` + `collectors/eero_usage.py` — **opt-in, disabled by default.**
+- [x] `probes/eero_cloud.py` + `collectors/eero_usage.py` — **opt-in, disabled by default.**
       Per-device up/down rates from `api-user.e2ro.com`. Non-negotiables:
   - Ships disabled. Enabling it is a deliberate config edit, never a default
   - Token-based: a one-time interactive `netmon eero-login` stores the long-lived token.
@@ -120,17 +120,17 @@ Rejected sources, recorded so they are not re-litigated:
 - **ARP-spoof interception** for per-device accounting — degrades the network for the target
   device and is hostile to debug. Out of scope by default, permanently
 
-## v0.5 — Alerts & retention `[ ]`
+## v0.5 — Alerts & retention `[x]`
 
-- [ ] `alerts/rules.py` — threshold and sustained-condition evaluation, configurable per metric.
+- [x] `alerts/rules.py` — threshold and sustained-condition evaluation, configurable per metric.
       Sustained-condition, not single-sample: the same hysteresis discipline as outage detection,
       because an alerting system that cries wolf gets muted and then it may as well not exist
-- [ ] `alerts/notifiers.py` — log, webhook, Windows toast. Each notifier fails independently;
+- [x] `alerts/notifiers.py` — log, webhook, Windows toast. Each notifier fails independently;
       a dead webhook must not suppress the toast
-- [ ] Alert de-duplication and cool-down, so one flapping condition is one alert, not two hundred
-- [ ] `db/retention.py` — raw 7d → 1-min rollup 30d → 5-min rollup 1y, then purge. Rollups are
+- [x] Alert de-duplication and cool-down, so one flapping condition is one alert, not two hundred
+- [x] `db/retention.py` — raw 7d → 1-min rollup 30d → 5-min rollup 1y, then purge. Rollups are
       computed, verified, and only then is the raw data deleted — never the other way round
-- [ ] `GET /alerts` — alert history over REST
+- [x] `GET /alerts` — alert history over REST
 - **No dashboard work.** Alert history is API-only in this phase; the UI lands in v0.6
 
 ## v0.6 — Interface design `[ ]` *(design phase — gated)*

@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- v0.4 bandwidth: explicit-source host-NIC rates with reset-safe deltas, opt-in bounded
+  Cloudflare capacity tests, and opt-in soft-failing eero cloud per-device rates; REST metrics
+  now identify unit and source, and `netmon eero-login` stores only the long-lived token.
+- v0.5 alerts and retention: sustained threshold rules with shared outage hysteresis,
+  independent log/webhook/toast notification backends, verified raw/1-minute/5-minute SQLite
+  rollups, scheduled retention, and filterable `/alerts` history. No dashboard files changed.
 - v0.3 connection health: injected DNS/HTTP/traceroute/UPnP probes, latency/DNS/HTTP/WAN
   collectors, hysteretic outage classification with WAN corroboration, background traceroute
   capture, `/events`, `/metrics`, `/status`, and a health dashboard.

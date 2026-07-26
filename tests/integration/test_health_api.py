@@ -23,7 +23,9 @@ def test_health_store_to_api_includes_metrics_and_traceroute(tmp_path):
     app = create_app(store=store, scheduler=scheduler)
     with TestClient(app) as client:
         assert client.get("/status").json()["verdict"] == "wan_isp_outage"
-        assert client.get("/metrics?kind=latency_rtt_ms").json()[0]["value"] == 2.5
+        metric = client.get("/metrics?kind=latency_rtt_ms").json()[0]
+        assert metric["value"] == 2.5
+        assert metric["source"] == "local"
         event = client.get("/events?kind=outage_start").json()[0]
         assert event["details"]["traceroute"] == []
         assert client.get(f"/events/{event['id']}").json()["kind"] == "outage_start"

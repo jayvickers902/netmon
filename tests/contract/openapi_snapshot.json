@@ -3,6 +3,7 @@
   "title": "netmon",
   "paths": [
     "/",
+    "/alerts",
     "/devices",
     "/devices/{device_id}",
     "/events",
