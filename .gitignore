@@ -1,8 +1,9 @@
 # Local configuration — contains your network details
 netmon.toml
 
-# Data
-data/
+# Data — anchored to the repo root so it cannot swallow src/netmon/data/,
+# which holds the bundled OUI vendor table that the wheel force-includes.
+/data/
 *.db
 *.db-wal
 *.db-shm
