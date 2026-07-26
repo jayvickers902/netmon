@@ -1,0 +1,11 @@
+{
+  "openapi": "3.1.0",
+  "title": "netmon",
+  "paths": [
+    "/",
+    "/devices",
+    "/devices/{device_id}",
+    "/events",
+    "/health"
+  ]
+}
