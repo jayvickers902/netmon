@@ -29,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The database lock's liveness check sent a Ctrl-C to netmon's own console. It used
+  `os.kill(pid, 0)`, the POSIX idiom for "does this process exist" — but on Windows signal 0
+  *is* `CTRL_C_EVENT`, so `os.kill` takes the `GenerateConsoleCtrlEvent` branch and delivers a
+  real console interrupt to every process in the group instead of answering the question. It
+  also never reported a dead PID, so a lock left behind by a crashed run blocked restore
+  permanently. Replaced with `OpenProcess`/`GetExitCodeProcess` (signatures declared, as the
+  ICMP handle-truncation fix required), with the POSIX path kept for non-Windows. Found by the
+  first CI run: the stray interrupt surfaced as a `KeyboardInterrupt` several tests later, in
+  the first asyncio runner that idled long enough to notice it.
 - Any non-ASCII bearer token crashed the auth middleware. `secrets.compare_digest` raises
   `TypeError` when either string contains non-ASCII characters, and header values arrive from
   the wire decoded as latin-1, so `Authorization: Bearer <any non-ASCII byte>` produced an

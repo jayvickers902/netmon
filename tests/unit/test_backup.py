@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import os
 import sqlite3
+import subprocess
+import sys
 from datetime import UTC, datetime
 
 import pytest
@@ -13,7 +16,48 @@ from netmon.db import (
     backup_database,
     restore_database,
 )
+from netmon.db.backup import process_is_alive
 from netmon.models import Event, Sample
+
+
+@pytest.fixture
+def dead_pid():
+    """A PID that is definitely not running.
+
+    The Popen object is kept alive deliberately: while it holds the process
+    handle open Windows cannot recycle the PID, so the answer stays stable.
+    """
+    process = subprocess.Popen([sys.executable, "-c", ""])
+    process.wait()
+    yield process.pid
+
+
+def test_liveness_probe_answers_without_signalling_the_process(dead_pid):
+    # os.kill(pid, 0) would be the POSIX idiom here. On Windows signal 0 is
+    # CTRL_C_EVENT, so it delivers a Ctrl-C to our own console process group and
+    # never reports a dead PID. Both halves have to be right.
+    assert process_is_alive(os.getpid()) is True
+    assert process_is_alive(dead_pid) is False
+
+
+def test_a_lock_left_by_a_crashed_run_does_not_block_restore(tmp_path, dead_pid):
+    database = tmp_path / "netmon.db"
+    backup = tmp_path / "backup.db"
+    Store(database)
+    backup_database(database, backup)
+    stale = DatabaseRuntimeLock(database)
+    stale.lock_path.write_text(str(dead_pid), encoding="ascii")
+
+    # Before the liveness fix this raised DatabaseBusyError: a dead PID read as
+    # alive on Windows, so a lock left behind by a crash blocked restore forever.
+    restore_database(database, backup)
+
+    # And the stale file is reclaimed rather than fenced around.
+    stale.acquire()
+    try:
+        assert stale.lock_path.read_text(encoding="ascii") == str(os.getpid())
+    finally:
+        stale.release()
 
 
 def test_backup_and_restore_round_trip_retains_samples_events_and_old_database(tmp_path):

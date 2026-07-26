@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+import ctypes
 import os
 import shutil
 import sqlite3
+import sys
 import tempfile
 from contextlib import suppress
 from pathlib import Path
 from urllib.parse import quote
 
 from .migrations import CURRENT_SCHEMA_VERSION, migrate
+
+if sys.platform == "win32":
+    from ctypes import wintypes
 
 
 class DatabaseBackupError(RuntimeError):
@@ -63,6 +68,58 @@ class DatabaseRuntimeLock:
             pid = int(self.lock_path.read_text(encoding="ascii").strip())
         except (OSError, ValueError):
             return True
+        if pid <= 0:
+            return True
+        return process_is_alive(pid)
+
+
+if sys.platform == "win32":
+    _PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    _STILL_ACTIVE = 259
+    _ERROR_INVALID_PARAMETER = 87
+
+    def process_is_alive(pid: int) -> bool:
+        """Ask Windows whether a process exists, without signalling it.
+
+        `os.kill(pid, 0)` is the POSIX idiom for this and is wrong here in a way
+        that is actively destructive. On Windows, signal 0 *is* `CTRL_C_EVENT`,
+        so `os.kill` takes the `GenerateConsoleCtrlEvent` branch and delivers a
+        real Ctrl-C to every process sharing our console — netmon included —
+        instead of answering the question. It also never reports a dead PID, so
+        a stale lock file left by a crashed run would block restore forever.
+
+        As in `probes/icmp.py`, declaring the signatures is not optional:
+        `OpenProcess` returns a 64-bit HANDLE and an undeclared restype would be
+        truncated to `c_int`, turning a valid handle into a garbage one.
+        """
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.GetExitCodeProcess.argtypes = (wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD))
+        kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = (wintypes.HANDLE,)
+        kernel32.CloseHandle.restype = wintypes.BOOL
+
+        handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not handle:
+            # Anything other than "no such pid" means it may well be alive and we
+            # simply cannot see it, so refuse the restore rather than risk one.
+            return ctypes.get_last_error() != _ERROR_INVALID_PARAMETER
+        try:
+            code = wintypes.DWORD()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            # A process that genuinely exits with 259 reads as alive. That is the
+            # standard Windows caveat and it fails safe: worst case we refuse a
+            # restore that would have been allowed.
+            return code.value == _STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+
+else:
+
+    def process_is_alive(pid: int) -> bool:
+        """Ask POSIX whether a process exists. Signal 0 performs no delivery."""
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
