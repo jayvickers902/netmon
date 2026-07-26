@@ -57,16 +57,53 @@ interval_seconds = 30
 # Saturates the link while running — keep this infrequent.
 enabled = false
 interval_seconds = 21600  # 6 hours
+# Saturates the link while running; keep it infrequent because the test itself affects health.
+endpoint = "https://speed.cloudflare.com"
+download_bytes = 10000000
+upload_bytes = 10000000
+# A hard cap prevents a slow or misconfigured endpoint from turning one run into a flood.
+max_bytes = 50000000
+total_time_budget_seconds = 120
+
+[host_nic]
+# This is local-machine traffic, not total WAN utilisation or other devices' traffic.
+enabled = true
+interval_seconds = 10
+# psutil cannot provide per-process byte counters on Windows, so zero is honest by default.
+top_processes = 0
+
+[eero]
+# Cloud usage is reverse-engineered and disappears during an internet outage; opt in deliberately.
+enabled = false
+interval_seconds = 60
+token_path = "data/eero.token"
+base_url = "https://api-user.e2ro.com"
 
 [retention]
+# Raw data is kept for a week; older data is compacted before deletion to protect disk use.
 raw_days = 7
+# These tiers must stay ordered; each coarser tier is built only from verified finer data.
 rollup_1m_days = 30
 rollup_5m_days = 365
 
 [alerts]
 enabled = true
-# webhook_url = "https://..."
+# Cool-down prevents a flapping condition from producing a notification storm.
+interval_seconds = 5
+cooldown_seconds = 3600
 windows_toast = true
+# Add [[alerts.rules]] entries deliberately; no threshold is assumed for every metric.
+# [[alerts.rules]]
+# name = "gateway latency"
+# metric_kind = "latency_rtt_ms"
+# target = "gateway"
+# source = "local"
+# operator = ">"
+# threshold = 200
+# failures_to_open = 3
+# successes_to_close = 2
+# severity = "warning"
+# webhook_url = "https://..."
 
 [throttle]
 # No enforcement backend exists yet; see ROADMAP v1.1.

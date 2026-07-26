@@ -14,6 +14,7 @@ class Sample:
     unit: str
     ts: datetime
     value: float
+    source: str = "local"
 
 
 @dataclass(frozen=True, slots=True)

@@ -7,7 +7,7 @@ import tomllib
 from pathlib import Path
 from typing import Any, ClassVar
 
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field, HttpUrl, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
 
@@ -66,6 +66,32 @@ class WanConfig(BaseModel):
 class SpeedtestConfig(BaseModel):
     enabled: bool = False
     interval_seconds: float = Field(default=21600.0, gt=0)
+    endpoint: HttpUrl = HttpUrl("https://speed.cloudflare.com")
+    download_bytes: int = Field(default=10_000_000, gt=0)
+    upload_bytes: int = Field(default=10_000_000, gt=0)
+    max_bytes: int = Field(default=50_000_000, gt=0)
+    total_time_budget_seconds: float = Field(default=120.0, gt=0)
+
+    @model_validator(mode="after")
+    def safe_interval(self) -> SpeedtestConfig:
+        if self.interval_seconds < 900:
+            raise ValueError("speedtest.interval_seconds must be at least 900 seconds")
+        if self.download_bytes > self.max_bytes or self.upload_bytes > self.max_bytes:
+            raise ValueError("speedtest byte counts cannot exceed speedtest.max_bytes")
+        return self
+
+
+class HostNicConfig(BaseModel):
+    enabled: bool = True
+    interval_seconds: float = Field(default=10.0, gt=0)
+    top_processes: int = Field(default=0, ge=0, le=100)
+
+
+class EeroConfig(BaseModel):
+    enabled: bool = False
+    interval_seconds: float = Field(default=60.0, ge=30.0)
+    token_path: Path = Path("data/eero.token")
+    base_url: HttpUrl = HttpUrl("https://api-user.e2ro.com")
 
 
 class RetentionConfig(BaseModel):
@@ -73,9 +99,40 @@ class RetentionConfig(BaseModel):
     rollup_1m_days: int = Field(default=30, ge=1)
     rollup_5m_days: int = Field(default=365, ge=1)
 
+    @model_validator(mode="after")
+    def tiers_are_ordered(self) -> RetentionConfig:
+        if not self.raw_days < self.rollup_1m_days < self.rollup_5m_days:
+            raise ValueError(
+                "retention tiers must be ordered raw_days < rollup_1m_days < rollup_5m_days"
+            )
+        return self
+
+
+class AlertRuleConfig(BaseModel):
+    name: str
+    metric_kind: str
+    target: str | None = None
+    source: str | None = None
+    operator: str = ">"
+    threshold: float
+    failures_to_open: int = Field(default=3, ge=1)
+    successes_to_close: int = Field(default=2, ge=1)
+    severity: str = "warning"
+
+    @model_validator(mode="after")
+    def valid_operator(self) -> AlertRuleConfig:
+        if self.operator not in {">", ">=", "<", "<=", "==", "!="}:
+            raise ValueError("alerts rule operator must be one of >, >=, <, <=, ==, !=")
+        if self.severity not in {"info", "warning", "error", "critical"}:
+            raise ValueError("alerts rule severity must be info, warning, error, or critical")
+        return self
+
 
 class AlertsConfig(BaseModel):
     enabled: bool = True
+    interval_seconds: float = Field(default=5.0, gt=0)
+    cooldown_seconds: float = Field(default=3600.0, ge=0)
+    rules: list[AlertRuleConfig] = Field(default_factory=list)
     webhook_url: HttpUrl | None = None
     windows_toast: bool = True
 
@@ -113,7 +170,9 @@ class NetmonSettings(BaseSettings):
     http: HttpConfig = Field(default_factory=HttpConfig)
     outage: OutageConfig = Field(default_factory=OutageConfig)
     wan: WanConfig = Field(default_factory=WanConfig)
+    host_nic: HostNicConfig = Field(default_factory=HostNicConfig)
     speedtest: SpeedtestConfig = Field(default_factory=SpeedtestConfig)
+    eero: EeroConfig = Field(default_factory=EeroConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     throttle: ThrottleConfig = Field(default_factory=ThrottleConfig)
