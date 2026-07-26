@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+import sqlite3
+from datetime import UTC, datetime
+
+import pytest
+
+from netmon.db import (
+    DatabaseBackupError,
+    DatabaseBusyError,
+    DatabaseRuntimeLock,
+    Store,
+    backup_database,
+    restore_database,
+)
+from netmon.models import Event, Sample
+
+
+def test_backup_and_restore_round_trip_retains_samples_events_and_old_database(tmp_path):
+    database = tmp_path / "netmon.db"
+    backup = tmp_path / "backup.db"
+    original_time = datetime(2026, 1, 1, tzinfo=UTC)
+    changed_time = datetime(2026, 1, 2, tzinfo=UTC)
+    store = Store(database)
+    store.persist_samples([Sample("latency", "gateway", "ms", original_time, 4.5)])
+    store.record_event(Event(original_time, "outage_end", "info", "Recovered", {}))
+
+    backup_database(database, backup)
+    store.persist_samples([Sample("latency", "gateway", "ms", changed_time, 9.5)])
+    displaced = restore_database(database, backup)
+
+    assert displaced == tmp_path / "netmon.db.pre-restore"
+    restored = Store(database)
+    assert [item["value"] for item in restored.list_metrics()] == [4.5]
+    assert restored.list_events()[0]["message"] == "Recovered"
+    retained = Store(displaced)
+    assert [item["value"] for item in retained.list_metrics()] == [4.5, 9.5]
+
+
+def test_corrupt_restore_source_is_refused_without_displacing_live_database(tmp_path):
+    database = tmp_path / "netmon.db"
+    corrupt = tmp_path / "corrupt.db"
+    Store(database).persist_samples(
+        [Sample("latency", "gateway", "ms", datetime(2026, 1, 1, tzinfo=UTC), 4.5)]
+    )
+    corrupt.write_bytes(b"not sqlite")
+
+    with pytest.raises(DatabaseBackupError, match="valid SQLite"):
+        restore_database(database, corrupt)
+    assert Store(database).list_metrics()[0]["value"] == 4.5
+    assert not (tmp_path / "netmon.db.pre-restore").exists()
+
+
+def test_newer_schema_restore_is_refused(tmp_path):
+    database = tmp_path / "netmon.db"
+    newer = tmp_path / "newer.db"
+    Store(database)
+    connection = sqlite3.connect(newer)
+    connection.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY NOT NULL)")
+    connection.execute("INSERT INTO schema_migrations VALUES (99)")
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(DatabaseBackupError, match="not supported"):
+        restore_database(database, newer)
+    assert not (tmp_path / "netmon.db.pre-restore").exists()
+
+
+def test_restore_refuses_a_running_netmon_database(tmp_path):
+    database = tmp_path / "netmon.db"
+    backup = tmp_path / "backup.db"
+    Store(database)
+    backup_database(database, backup)
+    lock = DatabaseRuntimeLock(database)
+    lock.acquire()
+    try:
+        with pytest.raises(DatabaseBusyError, match="running netmon"):
+            restore_database(database, backup)
+    finally:
+        lock.release()

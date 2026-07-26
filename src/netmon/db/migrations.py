@@ -5,12 +5,20 @@ from __future__ import annotations
 import sqlite3
 from importlib.resources import files
 
+CURRENT_SCHEMA_VERSION = 2
+
 
 def migrate(connection: sqlite3.Connection) -> None:
     connection.execute(
         "CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY NOT NULL)"
     )
     applied = {row[0] for row in connection.execute("SELECT version FROM schema_migrations")}
+    newest = max(applied, default=0)
+    if newest > CURRENT_SCHEMA_VERSION:
+        raise RuntimeError(
+            f"database schema version {newest} is newer than supported version "
+            f"{CURRENT_SCHEMA_VERSION}"
+        )
     if 1 not in applied:
         schema = files("netmon.db").joinpath("schema.sql").read_text(encoding="utf-8")
         connection.executescript(schema)

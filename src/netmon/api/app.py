@@ -34,7 +34,7 @@ from netmon.collectors.retention import RetentionCollector
 from netmon.collectors.speedtest import SpeedtestCollector
 from netmon.collectors.wan_status import WanStatusCollector
 from netmon.config import NetmonSettings
-from netmon.db import Store
+from netmon.db import DatabaseRuntimeLock, Store
 from netmon.outage import OutageCoordinator, OutageStateMachine
 from netmon.probes.arp import create_arp_probe, create_interface_probe
 from netmon.probes.dns import ResolverDnsProbe
@@ -148,14 +148,19 @@ def create_app(
         application_settings, application_store, application_clock
     )
     expected_token = application_settings.api.token
+    database_lock = DatabaseRuntimeLock(application_store.path)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
-        await application_scheduler.start()
+        database_lock.acquire()
         try:
-            yield
+            await application_scheduler.start()
+            try:
+                yield
+            finally:
+                await application_scheduler.stop()
         finally:
-            await application_scheduler.stop()
+            database_lock.release()
 
     app = FastAPI(title="netmon", version="1.0.0", lifespan=lifespan)
 

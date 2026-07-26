@@ -11,12 +11,16 @@ import uvicorn
 
 from netmon.api.app import create_app
 from netmon.config import NetmonSettings
+from netmon.db import DatabaseBackupError, backup_database, restore_database
 from netmon.probes.eero_cloud import EeroCloudError, EeroCloudProbe, HttpxEeroTransport
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(prog="netmon")
-    parser.add_argument("command", nargs="?", choices=["eero-login", "gen-token"])
+    parser.add_argument(
+        "command", nargs="?", choices=["eero-login", "gen-token", "backup", "restore"]
+    )
+    parser.add_argument("path", nargs="?")
     args = parser.parse_args()
     if args.command == "gen-token":
         print(secrets.token_urlsafe(32))
@@ -25,6 +29,25 @@ def main() -> None:
         )
         return
     settings = NetmonSettings()
+    if args.command in {"backup", "restore"}:
+        if args.path is None:
+            parser.error(f"{args.command} requires a path")
+        try:
+            if args.command == "backup":
+                backup_database(settings.database.path, Path(args.path))
+                print(f"backup written to {args.path}")
+            else:
+                displaced = restore_database(settings.database.path, Path(args.path))
+                if displaced is None:
+                    print(f"database restored from {args.path}")
+                else:
+                    print(
+                        f"database restored from {args.path}; "
+                        f"old database retained at {displaced}"
+                    )
+        except DatabaseBackupError as error:
+            raise SystemExit(str(error)) from None
+        return
     if args.command == "eero-login":
         asyncio.run(_eero_login(settings.eero.base_url, settings.eero.token_path))
         return
