@@ -19,6 +19,7 @@ build/
 # Tooling
 .pytest_cache/
 _pytesttmp/
+.pytest-tmp/
 .mypy_cache/
 .ruff_cache/
 .coverage
