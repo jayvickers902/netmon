@@ -1,0 +1,68 @@
+# netmon configuration. Copy to netmon.toml and edit.
+# netmon.toml is gitignored — it holds your local network details.
+
+[server]
+host = "127.0.0.1"
+port = 8787
+
+[database]
+path = "data/netmon.db"
+
+[discovery]
+# Subnets to sweep. Leave empty to auto-detect from the host's interfaces.
+subnets = []
+# Seconds between full sweeps. Keep this gentle; aggressive sweeping annoys
+# sleeping devices and some IoT gear responds badly to it.
+interval_seconds = 300
+# Consider a device offline after this many consecutive missed sweeps.
+offline_after_misses = 3
+
+[latency]
+interval_seconds = 10
+# "gateway" is resolved at runtime to the host's default gateway.
+targets = ["gateway", "1.1.1.1", "8.8.8.8"]
+# Samples per collection, used to derive jitter and loss.
+probes_per_sample = 5
+timeout_ms = 1000
+
+[dns]
+interval_seconds = 60
+resolvers = ["1.1.1.1", "8.8.8.8"]
+query_names = ["example.com", "cloudflare.com"]
+
+[http]
+interval_seconds = 60
+urls = ["https://www.google.com/generate_204"]
+timeout_seconds = 5
+
+[outage]
+# An outage is declared only after failures persist. Single dropped packets are
+# normal and should not page you.
+failures_to_open = 3
+successes_to_close = 2
+# Capture a traceroute when an outage opens.
+traceroute_on_open = true
+
+[wan]
+# UPnP IGD byte counters. Availability depends on the router; see docs/spike-upnp.md.
+enabled = true
+interval_seconds = 30
+
+[speedtest]
+# Saturates the link while running — keep this infrequent.
+enabled = false
+interval_seconds = 21600  # 6 hours
+
+[retention]
+raw_days = 7
+rollup_1m_days = 30
+rollup_5m_days = 365
+
+[alerts]
+enabled = true
+# webhook_url = "https://..."
+windows_toast = true
+
+[throttle]
+# No enforcement backend exists yet; see ROADMAP v1.1.
+backend = "null"

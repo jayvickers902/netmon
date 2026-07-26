@@ -1,0 +1,87 @@
+# netmon
+
+A self-hosted monitoring tool for a home network. Discovers devices, tracks connection
+health, records bandwidth, and surfaces it all through a web dashboard and REST API.
+
+Built to answer three questions quickly:
+
+- **"Is the internet down, or is it just me?"** — continuous latency/jitter/loss, DNS and
+  HTTP probes, and an outage timeline with traceroutes captured at the moment things degraded.
+- **"What's on my network?"** — device inventory keyed by MAC, with vendor, hostname, and
+  presence history.
+- **"What's using the connection?"** — WAN throughput and per-NIC counters over time.
+
+## Status
+
+Pre-release. See [ROADMAP.md](ROADMAP.md) for phases and [CHANGELOG.md](CHANGELOG.md) for
+what has landed.
+
+## Deployment context
+
+netmon is designed to run as an ordinary host on the LAN, behind a **consumer/ISP-provided
+router** — no SSH, no mirror port, no SNMP assumed. Everything it collects it obtains by
+active probing, ARP inspection, or unauthenticated UPnP, so it works without router
+cooperation.
+
+That constraint has real consequences, stated plainly:
+
+| Capability | Supported | Notes |
+|---|---|---|
+| Device inventory & presence | Yes | ARP table + ICMP sweep, mDNS/SSDP/NetBIOS names, MAC→vendor |
+| Connection health & troubleshooting | Yes | Latency, jitter, loss, DNS timing, HTTP probes, outage events, auto-traceroute |
+| Total WAN bandwidth | Probable | Via UPnP IGD byte counters, if the router exposes them |
+| This host's bandwidth | Yes | Per-NIC and per-process counters |
+| **Per-device** bandwidth | **No** | Impossible from a passive LAN host without router support. The only alternative is ARP-spoof interception, which is deliberately out of scope |
+| **Throttling** | **Not yet** | Requires a traffic enforcement point the default topology does not provide. See ROADMAP v1.1 |
+
+## Requirements
+
+- Python 3.12+
+- [uv](https://docs.astral.sh/uv/) for dependency management
+- Windows 10/11 or Linux (developed on Windows; probes have per-platform implementations)
+
+No administrator privileges required — ICMP uses the Windows `IcmpSendEcho` API rather than
+raw sockets.
+
+## Quick start
+
+```bash
+uv sync
+cp netmon.example.toml netmon.toml
+uv run python -m netmon
+```
+
+Dashboard at http://127.0.0.1:8787, OpenAPI docs at `/docs`.
+
+## Development
+
+```bash
+uv run pytest
+uv run ruff check . && uv run ruff format --check .
+uv run mypy src
+```
+
+The default test run touches no network. Tests that need real network access are marked
+`@pytest.mark.live` and are excluded from the default run and from CI:
+
+```bash
+uv run pytest -m live
+```
+
+## Architecture
+
+Two layers, deliberately separated:
+
+- **`probes/`** — low-level I/O primitives (ICMP, ARP, UPnP, DNS, traceroute). No scheduling,
+  no persistence, no state. Each has a platform-appropriate implementation behind a common
+  interface.
+- **`collectors/`** — scheduled jobs that wrap probes and emit `Sample` records to the store.
+
+Every collector receives its probes and its clock by dependency injection; none of them call
+the network or read the wall clock directly. That is what allows the test suite to exercise
+the full collector → store → API path against fakes with a frozen clock, and it is the single
+most important convention in this codebase. See [ROADMAP.md](ROADMAP.md).
+
+## License
+
+Private project.
