@@ -5,6 +5,18 @@ test suite, and a working dashboard — no phase leaves the tree in a half-wired
 
 Legend: `[ ]` not started · `[~]` in progress · `[x]` shipped
 
+## Design freeze
+
+**No new UI or visual design work lands before v0.6.** Phases v0.4 and v0.5 ship their data
+through the REST API and the existing minimal dashboard only — no new pages, no new charts, no
+restyling. The dashboard is deliberately being left ugly.
+
+All interface and interaction design is deferred to v0.6, where the accumulated API surface is
+put through a formal Claude Design review before anything is chosen and built. Building UI
+incrementally per-phase would mean designing around whatever happened to exist at the time, and
+then throwing it away. Any phase that needs to expose something to a human exposes it as JSON
+and stops there.
+
 ---
 
 ## v0.1 — Foundation `[x]`
@@ -60,43 +72,78 @@ The troubleshooting payoff. This is the phase that earns the tool its keep.
       not minutes later when you finally look. Attached to the outage event
 - [x] `GET /events` and a dashboard timeline
 
-## v0.4 — Bandwidth `[ ]` *(scope reduced — see spike)*
+## v0.4 — Bandwidth `[ ]` *(rescoped twice — see both spikes)*
 
 The UPnP spike came back negative: the eero 7 advertises `WANCommonInterfaceConfig` but
 implements none of it — `GetTotalBytesSent`/`GetTotalBytesReceived` are not declared and
 every action on that service returns HTTP 500. **Total WAN throughput has no local source
 on the current topology.** Full detail in `docs/spike-upnp.md`.
 
-What survives:
+The eero capability survey (`docs/eero-capabilities.md`) then reopened one option that the
+earlier roadmap had rejected. Per-device usage is **not** an eero Plus feature — live per-device
+throughput, refreshed every few seconds, is free tier, and it is served by the same cloud API
+the mobile app uses. That makes it the only source of per-device bandwidth available without
+buying hardware. It comes with real costs (reverse-engineered, cloud-dependent, needs a
+non-Amazon eero account), so it ships **off by default**.
 
 - [ ] `collectors/host_nic.py` — this host's per-NIC and per-process counters via psutil.
-      Unaffected by the spike, but covers this machine only
+      Unaffected by either spike, but covers this machine only
 - [ ] `collectors/speedtest.py` — scheduled throughput test, infrequent and opt-in
       (it saturates the link; running it often would itself cause the problems being measured).
       Measures *capacity*, not utilisation — it does not substitute for WAN counters
-- [ ] Dashboard throughput charts, scoped honestly to what is actually measured
-- [ ] **Spike:** document concrete throttling enforcement options for the actual hardware
-      present, in `docs/spike-throttle.md`. Feeds the v1.1 decision
+- [ ] `probes/eero_cloud.py` + `collectors/eero_usage.py` — **opt-in, disabled by default.**
+      Per-device up/down rates from `api-user.e2ro.com`. Non-negotiables:
+  - Ships disabled. Enabling it is a deliberate config edit, never a default
+  - Token-based: a one-time interactive `netmon eero-login` stores the long-lived token.
+    The account password is never persisted, and the token never appears in logs or API responses
+  - Poll no faster than 30s. The app's 5s cadence is not ours to imitate against an
+    undocumented, unrate-limited endpoint
+  - **Fails soft.** The internet being down is exactly when netmon matters most and exactly
+    when this collector cannot work. It degrades to `unavailable`; it never stalls the
+    scheduler, never raises, and never contributes to outage classification
+  - Every stored sample is tagged with its source, so cloud-derived data is never silently
+    mixed with locally measured data
+- [x] **Spike:** throttling enforcement options for the hardware actually present —
+      answered in `docs/spike-gateway.md`. Summary: nothing on the current topology can
+      rate-limit; the eero has no web UI to automate and no local API. Real shaping needs a
+      Linux gateway (~$160). eero profiles + schedules provide binary pause today. Feeds v1.1
+- **No dashboard work.** Throughput data is exposed over REST only — see the design freeze above
 
 Rejected sources, recorded so they are not re-litigated:
 
 - **UPnP byte counters** — not implemented by the eero. Re-open only if firmware adds them
-- **eero cloud API** (`api-user.e2ro.com`) — undocumented, token-authenticated, does expose
-  per-device usage, but puts a cloud dependency and an unannounced-breakage risk into a LAN
-  tool. Not recommended; not to be built speculatively
+- **SNMP** — port 161 closed; not supported on any eero model
+- **Local management API** — none exists. Port 80 serves a redirect to `blocked.eero.com`,
+  not an admin UI. Confirmed by direct probe, not assumed
+- **eero Plus subscription** — buying it adds *historical* usage graphs. netmon keeps its own
+  history in SQLite; that is the point of the project. Not a data unlock
+- **ARP-spoof interception** for per-device accounting — degrades the network for the target
+  device and is hostile to debug. Out of scope by default, permanently
 
 ## v0.5 — Alerts & retention `[ ]`
 
-- [ ] `alerts/rules.py` — threshold and sustained-condition evaluation, configurable per metric
-- [ ] `alerts/notifiers.py` — log, webhook, Windows toast
-- [ ] `db/retention.py` — raw 7d → 1-min rollup 30d → 5-min rollup 1y, then purge
-- [ ] Alert history in the API and dashboard
+- [ ] `alerts/rules.py` — threshold and sustained-condition evaluation, configurable per metric.
+      Sustained-condition, not single-sample: the same hysteresis discipline as outage detection,
+      because an alerting system that cries wolf gets muted and then it may as well not exist
+- [ ] `alerts/notifiers.py` — log, webhook, Windows toast. Each notifier fails independently;
+      a dead webhook must not suppress the toast
+- [ ] Alert de-duplication and cool-down, so one flapping condition is one alert, not two hundred
+- [ ] `db/retention.py` — raw 7d → 1-min rollup 30d → 5-min rollup 1y, then purge. Rollups are
+      computed, verified, and only then is the raw data deleted — never the other way round
+- [ ] `GET /alerts` — alert history over REST
+- **No dashboard work.** Alert history is API-only in this phase; the UI lands in v0.6
 
-## v0.6 — Dashboard polish `[ ]`
+## v0.6 — Interface design `[ ]` *(design phase — gated)*
 
-- [ ] Per-device drill-down: presence history, latency, associated events
-- [ ] Unified timeline across outages, device joins/departures, and alerts
-- [ ] On-demand diagnostics runner (ping / traceroute / DNS check from the UI)
+Everything visual accumulates here. By this point v0.2–v0.5 have produced the full REST surface
+— devices, metrics, events, outages, throughput, alerts — and the dashboard is still the
+deliberately-ugly minimum from v0.2.
+
+- [ ] Compile the complete API surface and the questions a user actually asks of it
+- [ ] **Formal Claude Design review** of the whole interface at once, before anything is built
+- [ ] Choose a direction from that review — explicitly, as a decision, not by accretion
+- [ ] Build it: per-device drill-down, unified timeline across outages/joins/alerts, throughput
+      charts scoped honestly to what is measured, on-demand diagnostics runner
 
 ## v1.0 — Hardening `[ ]`
 
@@ -114,33 +161,58 @@ implementation waits on a hardware decision.
 - [ ] `throttle/base.py` — `Enforcer` interface: `apply(mac, down_kbps, up_kbps)`, `clear(mac)`
 - [ ] `throttle/null.py` — no-op default that logs intent, so the API and UI can be built and
       tested before any enforcement backend exists
-- [ ] Written evaluation of the realistic options:
-  - **Linux box as gateway** (e.g. Raspberry Pi) with `tc`/`nftables` — the correct solution;
-    real per-device shaping, requires re-pointing DHCP
-  - **Router's own QoS / parental controls**, driven by web-UI automation — no new hardware,
-    but fragile and firmware-dependent
-  - **ARP-spoof interception** — no new hardware, but degrades network reliability for the
-    targeted device and is hostile to debug. Documented for completeness; **not recommended**
-- [ ] Implementation of the chosen backend
+- [x] Written evaluation of the realistic options — **done, in `docs/spike-gateway.md`.**
+      Conclusion: a Linux gateway is the only option that does real rate-limiting.
+      A fanless 4-port N100 mini PC is ~$150–200 and 6–12 W (~$12/year), running Debian with
+      `tc`/`cake` and `nftables`. **Buy 2.5GbE** — the eero 7 has 2.5GbE ports and a
+      gigabit-only gateway caps the house permanently.
+      Rejected: WSL2 (architecturally wrong — cannot own two interfaces, dies on host reboot);
+      Hyper-V VM (works, but makes household internet depend on a workstation's uptime);
+      eero web-UI automation (**no web UI exists** — port 80 is a block-page redirect);
+      ARP-spoofing (degrades the target's connection)
+- [ ] `throttle/linux_tc.py` — the chosen backend, once hardware exists
+- [ ] `collectors/gateway_nic.py` — per-device byte counters from nftables. Free once a gateway
+      exists, and strictly better than the cloud API: local, exact, no subscription, no
+      reverse-engineering
+- [ ] **Second `wan_status` backend.** Bridging the eero disables UPnP, which is where v0.3 gets
+      its WAN uptime signal. A gateway owns the WAN interface and can report link state
+      directly — but this is real work, not a free swap, and the outage classifier regresses
+      until it is done
 
 ---
 
 ## Out of scope
 
-- **Per-device bandwidth accounting** on the current topology. Not achievable from a passive
-  LAN host without router cooperation. Becomes available for free if the v1.1 gateway option
-  is chosen, since a gateway sees all traffic by definition.
+- **Per-device bandwidth accounting from a passive LAN host.** The switch does not forward
+  other devices' frames to us; no amount of code changes that. Two paths exist and both are
+  on the roadmap: the eero cloud API (v0.4, opt-in, cloud-dependent) and nftables counters on
+  a gateway (v1.1, local and exact).
 - **Total WAN throughput** on the current topology. The eero implements no byte counters and
-  offers no local management API. Same resolution path as above: the v1.1 gateway decision.
+  offers no local management API. Resolved by the v1.1 gateway decision.
+- **Traffic shaping on the current topology.** There is no enforcement point. See
+  `docs/spike-gateway.md` §5.
 - Deep packet inspection or content logging.
 - WAN-side/remote access. netmon is a LAN tool.
 
 ## Hardware context
 
-The network is an **eero 7 mesh**, not the ISP-provided router originally assumed. Practically
-this is the same constraint — no SSH, no SNMP, no mirror port, no local API, cloud-managed —
-so nothing in v0.1–v0.6 changes. It does narrow v1.1: eero exposes no supported hook for
-traffic shaping, so the "router's own QoS via web-UI automation" option is weaker than it would
-be on a conventional router, and eero's own per-device controls live behind its app and
-subscription rather than any interface netmon could drive. The Linux-box-as-gateway option is
-correspondingly more attractive.
+The network is an **eero 7 mesh** (dual-band BE5000, 2× 2.5GbE ports per unit), not the
+ISP-provided router originally assumed. Surveyed in full in `docs/eero-capabilities.md`.
+Confirmed by direct probe rather than assumption: no SSH (22 closed), no SNMP (161 closed),
+**no local management API of any kind** — port 80 returns a `303` redirect to
+`blocked.eero.com`, which is the content-filter block page, not an admin interface. What is
+open locally is DNS (53) and SSDP (1900). UPnP `WANIPConnection` is therefore netmon's only
+local router-derived signal, and v0.3 uses it.
+
+Three things follow:
+
+1. **The app is more capable than the network interface.** Live per-device usage, profiles,
+   pause, schedules, IP reservations, custom DNS, SQM and local DNS caching are all there —
+   they are just not reachable from the LAN. Configuration stays a phone job; netmon measures.
+2. **eero Labs is free and worth enabling.** Smart Queue Management is bufferbloat control, and
+   bufferbloat under load is the most likely cause of the original "connection is up and down"
+   complaint. netmon's latency collector is the instrument for measuring whether it helped.
+3. **v1.1 narrows to one option.** There is no web UI to automate and no local API to drive, so
+   a Linux gateway is the only path to real shaping. `docs/spike-gateway.md` prices it at
+   ~$160 and 8 W and recommends deferring the purchase until rate-limiting is actually wanted —
+   binary pause via eero profiles covers most of the intent today.

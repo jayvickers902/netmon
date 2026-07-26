@@ -31,6 +31,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- eero capability survey written up in `docs/eero-capabilities.md`, from direct probing rather
+  than assumption: no SSH, no SNMP, and no local management API — port 80 serves a redirect to
+  the content-filter block page, not an admin UI. Reverses one earlier roadmap decision: live
+  per-device usage is eero *free tier*, not an eero Plus feature, and is served by the cloud
+  API. It is therefore the only per-device bandwidth source available without new hardware, and
+  enters v0.4 as an opt-in collector that ships disabled.
+- Gateway and throttling spike answered in `docs/spike-gateway.md`, closing the v0.4 spike item.
+  WSL2 cannot act as a gateway (it owns neither interface and does not survive a host reboot);
+  a Hyper-V VM can but ties household internet to a workstation's uptime; a fanless 4-port N100
+  mini PC is ~$150–200 and 6–12 W. eero web-UI automation is impossible — there is no web UI.
+- ROADMAP: design freeze added. No new UI lands before v0.6, which becomes a formal design
+  phase gated on a Claude Design review of the complete API surface. v0.4 and v0.5 expose their
+  data over REST only.
 - v0.1 UPnP spike answered against the live network and written up in `docs/spike-upnp.md`.
   The router is an eero 7 whose `WANCommonInterfaceConfig` service is an unimplemented stub,
   so total WAN bandwidth has no local source. `WANIPConnection` does work, so router-reported
