@@ -14,6 +14,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifespan, CI workflow, and the UPnP discovery spike.
 - v0.2 discovery: injectable ICMP/ARP/OUI/hostname probes, bounded subnet discovery, device
   presence events, REST device/event endpoints, and a dependency-free dashboard.
+
+### Changed
+
+- v0.1 UPnP spike answered against the live network and written up in `docs/spike-upnp.md`.
+  The router is an eero 7 whose `WANCommonInterfaceConfig` service is an unimplemented stub,
+  so total WAN bandwidth has no local source. `WANIPConnection` does work, so router-reported
+  WAN uptime, last connection error, and external IP move into v0.3 as an outage signal.
+  ROADMAP v0.3/v0.4 and the README capability table revised to match.
 - Documented the offline OUI dataset refresh procedure.
 
 [Unreleased]: https://github.com/jayvickers/netmon/compare/HEAD

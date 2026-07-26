@@ -19,8 +19,10 @@ Scaffolding and the skeleton everything else hangs off.
 - [x] FastAPI app with lifespan-managed scheduler, `/health`
 - [x] CI: lint, typecheck, test on push
 - [x] **Spike:** SSDP M-SEARCH against the local router to determine whether it exposes
-      `WANCommonInterfaceConfig` byte counters. Record the finding in `docs/spike-upnp.md`.
-      This gates the v0.4 bandwidth approach and must be answered early.
+      `WANCommonInterfaceConfig` byte counters. **Answered 2026-07-26: no.** The router is an
+      eero 7 and the service is an unimplemented stub. `WANIPConnection` does work and yields
+      WAN uptime / last error / external IP. Scope changes pushed into v0.3 and v0.4;
+      full write-up in `docs/spike-upnp.md`
 
 ## v0.2 — Discovery `[x]`
 
@@ -43,22 +45,45 @@ The troubleshooting payoff. This is the phase that earns the tool its keep.
       (gateway, 1.1.1.1, 8.8.8.8, and any custom hosts)
 - [ ] `collectors/dns_probe.py` — resolution timing across configured resolvers
 - [ ] `collectors/http_probe.py` — TTFB and status for configured URLs
+- [ ] `probes/upnp.py` — SSDP discovery pinned to the LAN interface, plus `WANIPConnection`
+      `GetStatusInfo` / `GetExternalIPAddress`. **Must set `IP_MULTICAST_IF` and bind to the LAN
+      address**; this host runs VPNs and the default route swallows the multicast otherwise
+      (see `docs/spike-upnp.md`)
+- [ ] `collectors/wan_status.py` — router-reported WAN uptime, `LastConnectionError`, external
+      IP. Uptime moving *backwards* is a `wan_reconnect` event: ground truth from the router
+      that the link actually dropped, as opposed to a local Wi-Fi/NIC glitch or a dead far end.
+      Promoted here from v0.4 by the UPnP spike
 - [ ] Outage detection: sustained-failure state machine with hysteresis, not single-sample
-      triggers. Emits `outage_start` / `outage_end` events with accurate timestamps
+      triggers. Emits `outage_start` / `outage_end` events with accurate timestamps.
+      Takes `wan_status` as a corroborating input, not just latency
 - [ ] **Auto-traceroute on degradation** — capture the path at the moment things break,
       not minutes later when you finally look. Attached to the outage event
 - [ ] `GET /events` and a dashboard timeline
 
-## v0.4 — Bandwidth `[ ]`
+## v0.4 — Bandwidth `[ ]` *(scope reduced — see spike)*
 
-- [ ] `probes/upnp.py` — SSDP discovery + `GetTotalBytesSent`/`GetTotalBytesReceived`
-- [ ] `collectors/wan.py` — WAN throughput derived from counter deltas, with wrap handling
-- [ ] `collectors/host_nic.py` — this host's per-NIC and per-process counters via psutil
+The UPnP spike came back negative: the eero 7 advertises `WANCommonInterfaceConfig` but
+implements none of it — `GetTotalBytesSent`/`GetTotalBytesReceived` are not declared and
+every action on that service returns HTTP 500. **Total WAN throughput has no local source
+on the current topology.** Full detail in `docs/spike-upnp.md`.
+
+What survives:
+
+- [ ] `collectors/host_nic.py` — this host's per-NIC and per-process counters via psutil.
+      Unaffected by the spike, but covers this machine only
 - [ ] `collectors/speedtest.py` — scheduled throughput test, infrequent and opt-in
-      (it saturates the link; running it often would itself cause the problems being measured)
-- [ ] Dashboard throughput charts
+      (it saturates the link; running it often would itself cause the problems being measured).
+      Measures *capacity*, not utilisation — it does not substitute for WAN counters
+- [ ] Dashboard throughput charts, scoped honestly to what is actually measured
 - [ ] **Spike:** document concrete throttling enforcement options for the actual hardware
       present, in `docs/spike-throttle.md`. Feeds the v1.1 decision
+
+Rejected sources, recorded so they are not re-litigated:
+
+- **UPnP byte counters** — not implemented by the eero. Re-open only if firmware adds them
+- **eero cloud API** (`api-user.e2ro.com`) — undocumented, token-authenticated, does expose
+  per-device usage, but puts a cloud dependency and an unannounced-breakage risk into a LAN
+  tool. Not recommended; not to be built speculatively
 
 ## v0.5 — Alerts & retention `[ ]`
 
@@ -102,8 +127,20 @@ implementation waits on a hardware decision.
 
 ## Out of scope
 
-- **Per-device bandwidth accounting** on the default topology. Not achievable from a passive
+- **Per-device bandwidth accounting** on the current topology. Not achievable from a passive
   LAN host without router cooperation. Becomes available for free if the v1.1 gateway option
   is chosen, since a gateway sees all traffic by definition.
+- **Total WAN throughput** on the current topology. The eero implements no byte counters and
+  offers no local management API. Same resolution path as above: the v1.1 gateway decision.
 - Deep packet inspection or content logging.
 - WAN-side/remote access. netmon is a LAN tool.
+
+## Hardware context
+
+The network is an **eero 7 mesh**, not the ISP-provided router originally assumed. Practically
+this is the same constraint — no SSH, no SNMP, no mirror port, no local API, cloud-managed —
+so nothing in v0.1–v0.6 changes. It does narrow v1.1: eero exposes no supported hook for
+traffic shaping, so the "router's own QoS via web-UI automation" option is weaker than it would
+be on a conventional router, and eero's own per-device controls live behind its app and
+subscription rather than any interface netmon could drive. The Linux-box-as-gateway option is
+correspondingly more attractive.

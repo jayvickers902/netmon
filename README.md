@@ -9,7 +9,8 @@ Built to answer three questions quickly:
   HTTP probes, and an outage timeline with traceroutes captured at the moment things degraded.
 - **"What's on my network?"** — device inventory keyed by MAC, with vendor, hostname, and
   presence history.
-- **"What's using the connection?"** — WAN throughput and per-NIC counters over time.
+- **"What's using the connection?"** — per-NIC counters and periodic throughput tests. Read the
+  bandwidth row of the table below before expecting more than that.
 
 ## Status
 
@@ -18,21 +19,26 @@ what has landed.
 
 ## Deployment context
 
-netmon is designed to run as an ordinary host on the LAN, behind a **consumer/ISP-provided
-router** — no SSH, no mirror port, no SNMP assumed. Everything it collects it obtains by
-active probing, ARP inspection, or unauthenticated UPnP, so it works without router
-cooperation.
+netmon runs as an ordinary host on the LAN, behind a **consumer router** — no SSH, no mirror
+port, no SNMP assumed. Everything it collects it obtains by active probing, ARP inspection, or
+unauthenticated UPnP, so it works without router cooperation. The reference deployment is
+behind an **eero 7 mesh**, which is cloud-managed and exposes no local API.
 
 That constraint has real consequences, stated plainly:
 
 | Capability | Supported | Notes |
 |---|---|---|
-| Device inventory & presence | Yes | ARP table + ICMP sweep, mDNS/SSDP/NetBIOS names, MAC→vendor |
+| Device inventory & presence | Yes | ARP table + ICMP sweep, reverse DNS / NetBIOS names, MAC→vendor |
 | Connection health & troubleshooting | Yes | Latency, jitter, loss, DNS timing, HTTP probes, outage events, auto-traceroute |
-| Total WAN bandwidth | Probable | Via UPnP IGD byte counters, if the router exposes them |
+| WAN up/down, uptime, external IP | Yes | Router-reported via UPnP `WANIPConnection`. Distinguishes a real ISP outage from a local glitch |
 | This host's bandwidth | Yes | Per-NIC and per-process counters |
+| Link capacity | Yes | Scheduled speedtest — capacity, not utilisation |
+| **Total WAN bandwidth** | **No** | The eero implements no UPnP byte counters and no local API. See [docs/spike-upnp.md](docs/spike-upnp.md) |
 | **Per-device** bandwidth | **No** | Impossible from a passive LAN host without router support. The only alternative is ARP-spoof interception, which is deliberately out of scope |
-| **Throttling** | **Not yet** | Requires a traffic enforcement point the default topology does not provide. See ROADMAP v1.1 |
+| **Throttling** | **Not yet** | Requires a traffic enforcement point the current topology does not provide. See ROADMAP v1.1 |
+
+Both **No** rows resolve the same way — putting a Linux box in the traffic path as the
+gateway. That is the v1.1 hardware decision, and it is not taken unilaterally.
 
 ## Requirements
 
