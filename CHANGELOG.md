@@ -14,5 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifespan, CI workflow, and the UPnP discovery spike.
 - v0.2 discovery: injectable ICMP/ARP/OUI/hostname probes, bounded subnet discovery, device
   presence events, REST device/event endpoints, and a dependency-free dashboard.
+- Documented the offline OUI dataset refresh procedure.
 
 [Unreleased]: https://github.com/jayvickers/netmon/compare/HEAD
