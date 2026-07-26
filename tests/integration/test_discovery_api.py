@@ -38,7 +38,7 @@ def test_fake_collector_store_api_identity_and_offline(tmp_path, frozen_clock):
     arp.current = [ArpEntry("192.168.1.2", "aa:bb:cc:00:00:01")]
     asyncio.run(collector.collect())
     app = create_app(NetmonSettings(), store=store, scheduler=Scheduler([], clock=frozen_clock))
-    with TestClient(app) as client:
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
         devices = client.get("/devices").json()
         assert len(devices) == 1
         assert devices[0]["hostname"] == "lamp.local"

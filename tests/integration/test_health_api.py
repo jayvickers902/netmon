@@ -21,7 +21,7 @@ def test_health_store_to_api_includes_metrics_and_traceroute(tmp_path):
         [], status_provider=lambda: {"verdict": "wan_isp_outage", "open": True, "targets": {}}
     )
     app = create_app(store=store, scheduler=scheduler)
-    with TestClient(app) as client:
+    with TestClient(app, client=("127.0.0.1", 50000)) as client:
         assert client.get("/status").json()["verdict"] == "wan_isp_outage"
         metric = client.get("/metrics?kind=latency_rtt_ms").json()[0]
         assert metric["value"] == 2.5

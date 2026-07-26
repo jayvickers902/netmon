@@ -34,11 +34,13 @@ That constraint has real consequences, stated plainly:
 | This host's bandwidth | Yes | Per-NIC and per-process counters |
 | Link capacity | Yes | Scheduled speedtest — capacity, not utilisation |
 | **Total WAN bandwidth** | **No** | The eero implements no UPnP byte counters and no local API. See [docs/spike-upnp.md](docs/spike-upnp.md) |
-| **Per-device** bandwidth | **No** | Impossible from a passive LAN host without router support. The only alternative is ARP-spoof interception, which is deliberately out of scope |
+| Per-device bandwidth | Yes (opt-in) | eero cloud live rates are available with a separate non-Amazon account; passive LAN visibility remains impossible |
 | **Throttling** | **Not yet** | Requires a traffic enforcement point the current topology does not provide. See ROADMAP v1.1 |
+| Alerts & retention | Yes | Sustained rules, independent notifications, and verified SQLite rollups; API-only until v0.6 |
 
-Both **No** rows resolve the same way — putting a Linux box in the traffic path as the
-gateway. That is the v1.1 hardware decision, and it is not taken unilaterally.
+The total-WAN gap resolves by putting a Linux box in the traffic path as the gateway. That is
+the v1.1 hardware decision, and it is not taken unilaterally. Passive per-device visibility
+remains unavailable without either the opt-in eero cloud source or a gateway.
 
 ## Requirements
 

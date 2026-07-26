@@ -174,7 +174,9 @@ def create_app(
         supplied_token = _bearer_token(request)
         if expected_token is None or supplied_token is None:
             return _unauthorized()
-        if not secrets.compare_digest(supplied_token, expected_token):
+        if not secrets.compare_digest(
+            supplied_token.encode("utf-8"), expected_token.encode("utf-8")
+        ):
             return _unauthorized()
         return await call_next(request)
 
@@ -249,8 +251,6 @@ def _loopback_request_allowed(request: Request, enabled: bool) -> bool:
     client = request.client
     if client is None:
         return False
-    if client.host == "testclient":
-        return True
     try:
         return ipaddress.ip_address(client.host).is_loopback
     except ValueError:

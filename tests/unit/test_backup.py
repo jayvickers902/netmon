@@ -66,6 +66,37 @@ def test_newer_schema_restore_is_refused(tmp_path):
     assert not (tmp_path / "netmon.db.pre-restore").exists()
 
 
+def test_restore_refuses_a_source_without_an_understood_schema(tmp_path):
+    database = tmp_path / "netmon.db"
+    empty = tmp_path / "empty.db"
+    Store(database)
+    connection = sqlite3.connect(empty)
+    connection.execute("CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY NOT NULL)")
+    connection.commit()
+    connection.close()
+
+    with pytest.raises(DatabaseBackupError, match="no understood schema version"):
+        restore_database(database, empty)
+    assert not (tmp_path / "netmon.db.pre-restore").exists()
+
+
+def test_missing_and_overlapping_paths_are_refused(tmp_path):
+    database = tmp_path / "netmon.db"
+    backup = tmp_path / "backup.db"
+    Store(database)
+
+    with pytest.raises(DatabaseBackupError, match="does not exist"):
+        restore_database(database, tmp_path / "absent.db")
+    with pytest.raises(DatabaseBackupError, match="must be different"):
+        backup_database(database, database)
+    with pytest.raises(DatabaseBackupError, match="database does not exist"):
+        backup_database(tmp_path / "absent.db", backup)
+
+    backup_database(database, backup)
+    with pytest.raises(DatabaseBackupError, match="already exists"):
+        backup_database(database, backup)
+
+
 def test_restore_refuses_a_running_netmon_database(tmp_path):
     database = tmp_path / "netmon.db"
     backup = tmp_path / "backup.db"

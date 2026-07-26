@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- v1.0 hardening: bearer-token API authentication with loopback exemption, consistent SQLite
+  backup/restore with integrity and schema checks, Windows Task Scheduler service scripts with
+  rotating logs, and complete operator documentation. No dashboard files changed.
 - v0.4 bandwidth: explicit-source host-NIC rates with reset-safe deltas, opt-in bounded
   Cloudflare capacity tests, and opt-in soft-failing eero cloud per-device rates; REST metrics
   now identify unit and source, and `netmon eero-login` stores only the long-lived token.
@@ -26,6 +29,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Any non-ASCII bearer token crashed the auth middleware. `secrets.compare_digest` raises
+  `TypeError` when either string contains non-ASCII characters, and header values arrive from
+  the wire decoded as latin-1, so `Authorization: Bearer <any non-ASCII byte>` produced an
+  unhandled 500 with a traceback instead of a clean 401. The comparison is now done on encoded
+  bytes, which is still constant-time and cannot raise.
+- The loopback exemption trusted a literal client host of `testclient`, so test scaffolding sat
+  in the production auth path and the loopback tests never exercised the real address check.
+  Removed; the tests now present a genuine `127.0.0.1` peer, and a new test proves a
+  non-loopback client is still challenged while the exemption is enabled.
 - eero per-device usage would have been permanently unavailable in practice. `device_rates()`
   raised on any device missing `up_rate`/`down_rate`, and the collector maps every exception to
   "unavailable" — so one offline or idle device, which routinely carries no rate fields, blanked

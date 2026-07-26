@@ -151,12 +151,12 @@ deliberately-ugly minimum from v0.2.
 - [ ] Build it: per-device drill-down, unified timeline across outages/joins/alerts, throughput
       charts scoped honestly to what is measured, on-demand diagnostics runner
 
-## v1.0 — Hardening `[ ]`
+## v1.0 — Hardening `[x]`
 
-- [ ] Run as a Windows service (Task Scheduler or NSSM), with install/uninstall scripts
-- [ ] API authentication — the dashboard should not be wide open on the LAN
-- [ ] Database backup and restore
-- [ ] Complete operator documentation
+- [x] Run as a Windows service (Task Scheduler or NSSM), with install/uninstall scripts
+- [x] API authentication — the dashboard should not be wide open on the LAN
+- [x] Database backup and restore
+- [x] Complete operator documentation
 
 ## v1.1+ — Throttling `[ ]` *(gated — requires a decision)*
 

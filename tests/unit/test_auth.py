@@ -12,9 +12,10 @@ from netmon.db import Store
 from netmon.scheduler import Scheduler
 
 
-def _client(tmp_path, settings: NetmonSettings) -> TestClient:
+def _client(tmp_path, settings: NetmonSettings, host: str = "127.0.0.1") -> TestClient:
     return TestClient(
-        create_app(settings=settings, store=Store(tmp_path / "auth.db"), scheduler=Scheduler([]))
+        create_app(settings=settings, store=Store(tmp_path / "auth.db"), scheduler=Scheduler([])),
+        client=(host, 50000),
     )
 
 
@@ -46,6 +47,28 @@ def test_bad_and_missing_credentials_do_not_leak_token(tmp_path, caplog):
             assert "wrong-token" not in response.text
         assert "super-secret" not in caplog.text
         assert "wrong-token" not in caplog.text
+
+
+def test_loopback_exemption_does_not_cover_remote_clients(tmp_path):
+    settings = NetmonSettings(api=ApiConfig(token="secret", allow_loopback_unauthenticated=True))
+    with _client(tmp_path, settings, host="192.168.1.50") as client:
+        assert client.get("/status").status_code == 401
+        assert client.get("/status", headers={"Authorization": "Bearer secret"}).status_code == 200
+
+
+def test_non_ascii_bearer_value_is_rejected_not_a_server_error(tmp_path):
+    settings = NetmonSettings(api=ApiConfig(token="secret", allow_loopback_unauthenticated=False))
+    with _client(tmp_path, settings) as client:
+        # A real client can put non-ASCII bytes on the wire; str comparison would raise TypeError.
+        response = client.get("/status", headers={"Authorization": "Bearer über-wrong".encode()})
+        assert response.status_code == 401
+
+
+def test_token_is_not_accepted_as_a_query_parameter(tmp_path):
+    settings = NetmonSettings(api=ApiConfig(token="secret", allow_loopback_unauthenticated=False))
+    with _client(tmp_path, settings) as client:
+        assert client.get("/status?token=secret").status_code == 401
+        assert client.get("/status?access_token=secret").status_code == 401
 
 
 def test_non_loopback_without_token_is_rejected_at_config_load():

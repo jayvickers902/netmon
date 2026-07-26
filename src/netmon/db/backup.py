@@ -153,7 +153,10 @@ def _validate_database(path: Path) -> int:
             connection.close()
     if not rows:
         raise DatabaseBackupError(f"restore source has no understood schema version: {path}")
-    version = max(int(row[0]) for row in rows)
+    try:
+        version = max(int(row[0]) for row in rows)
+    except (TypeError, ValueError):
+        raise DatabaseBackupError(f"restore source has an invalid schema version: {path}") from None
     if version < 1 or version > CURRENT_SCHEMA_VERSION:
         raise DatabaseBackupError(
             f"restore source schema version {version} is not supported by this build"
