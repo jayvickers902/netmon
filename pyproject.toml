@@ -33,6 +33,12 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/netmon"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/netmon/data/oui.csv" = "netmon/data/oui.csv"
+
+[tool.hatch.build.targets.sdist.force-include]
+"src/netmon/data/oui.csv" = "src/netmon/data/oui.csv"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
