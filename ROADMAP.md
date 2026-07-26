@@ -41,24 +41,24 @@ Know what's on the network.
 
 The troubleshooting payoff. This is the phase that earns the tool its keep.
 
-- [ ] `collectors/latency.py` — RTT, jitter, packet loss per configured target
+- [x] `collectors/latency.py` — RTT, jitter, packet loss per configured target
       (gateway, 1.1.1.1, 8.8.8.8, and any custom hosts)
-- [ ] `collectors/dns_probe.py` — resolution timing across configured resolvers
-- [ ] `collectors/http_probe.py` — TTFB and status for configured URLs
-- [ ] `probes/upnp.py` — SSDP discovery pinned to the LAN interface, plus `WANIPConnection`
+- [x] `collectors/dns_probe.py` — resolution timing across configured resolvers
+- [x] `collectors/http_probe.py` — TTFB and status for configured URLs
+- [x] `probes/upnp.py` — SSDP discovery pinned to the LAN interface, plus `WANIPConnection`
       `GetStatusInfo` / `GetExternalIPAddress`. **Must set `IP_MULTICAST_IF` and bind to the LAN
       address**; this host runs VPNs and the default route swallows the multicast otherwise
       (see `docs/spike-upnp.md`)
-- [ ] `collectors/wan_status.py` — router-reported WAN uptime, `LastConnectionError`, external
+- [x] `collectors/wan_status.py` — router-reported WAN uptime, `LastConnectionError`, external
       IP. Uptime moving *backwards* is a `wan_reconnect` event: ground truth from the router
       that the link actually dropped, as opposed to a local Wi-Fi/NIC glitch or a dead far end.
       Promoted here from v0.4 by the UPnP spike
-- [ ] Outage detection: sustained-failure state machine with hysteresis, not single-sample
+- [x] Outage detection: sustained-failure state machine with hysteresis, not single-sample
       triggers. Emits `outage_start` / `outage_end` events with accurate timestamps.
       Takes `wan_status` as a corroborating input, not just latency
-- [ ] **Auto-traceroute on degradation** — capture the path at the moment things break,
+- [x] **Auto-traceroute on degradation** — capture the path at the moment things break,
       not minutes later when you finally look. Attached to the outage event
-- [ ] `GET /events` and a dashboard timeline
+- [x] `GET /events` and a dashboard timeline
 
 ## v0.4 — Bandwidth `[ ]` *(scope reduced — see spike)*
 

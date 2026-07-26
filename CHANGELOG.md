@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- v0.3 connection health: injected DNS/HTTP/traceroute/UPnP probes, latency/DNS/HTTP/WAN
+  collectors, hysteretic outage classification with WAN corroboration, background traceroute
+  capture, `/events`, `/metrics`, `/status`, and a health dashboard.
 - Project scaffolding: README, roadmap, changelog, packaging config, example configuration.
 - v0.1 foundation: validated configuration, WAL SQLite storage, migrations, scheduler, API
   lifespan, CI workflow, and the UPnP discovery spike.

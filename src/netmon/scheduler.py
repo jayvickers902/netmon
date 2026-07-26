@@ -14,6 +14,7 @@ from netmon.models import Sample
 
 logger = logging.getLogger(__name__)
 SampleSink = Callable[[list[Sample]], Awaitable[None] | None]
+StatusProvider = Callable[[], dict[str, object]]
 
 
 @dataclass(slots=True)
@@ -33,12 +34,14 @@ class Scheduler:
         clock: Clock | None = None,
         startup_jitter: float = 1.0,
         max_backoff: float = 300.0,
+        status_provider: StatusProvider | None = None,
     ) -> None:
         self.collectors = collectors
         self.sink = sink
         self.clock = clock or RealClock()
         self.startup_jitter = startup_jitter
         self.max_backoff = max_backoff
+        self.status_provider = status_provider
         self.statuses = {
             collector.name: CollectorStatus(collector.name) for collector in collectors
         }
@@ -69,6 +72,11 @@ class Scheduler:
             }
             for name, status in self.statuses.items()
         }
+
+    def current_status(self) -> dict[str, object]:
+        if self.status_provider is None:
+            return {"verdict": "unknown", "open": False, "targets": {}, "wan": None}
+        return self.status_provider()
 
     async def _run(self, collector: Collector) -> None:
         status = self.statuses[collector.name]

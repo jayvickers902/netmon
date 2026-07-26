@@ -6,6 +6,9 @@
     "/devices",
     "/devices/{device_id}",
     "/events",
-    "/health"
+    "/events/{event_id}",
+    "/health",
+    "/metrics",
+    "/status"
   ]
 }

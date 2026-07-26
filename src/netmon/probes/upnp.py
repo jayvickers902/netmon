@@ -39,11 +39,13 @@ class UpnpProbe:
         gateway: GatewayProbe | None = None,
         gateway_ip: str | None = None,
         timeout_seconds: float = 3.0,
+        transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
         self.lan_ip = lan_ip
         self.gateway = gateway or SystemGatewayProbe()
         self.gateway_ip = gateway_ip
         self.timeout_seconds = timeout_seconds
+        self.transport = transport
 
     async def status(self) -> WanStatus | None:
         lan_ip = self.lan_ip or await self.gateway.lan_address(self.gateway_ip)
@@ -87,7 +89,9 @@ class UpnpProbe:
 
     async def _read_status(self, location: str) -> WanStatus:
         timeout = httpx.Timeout(self.timeout_seconds)
-        async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, trust_env=False, transport=self.transport
+        ) as client:
             description_response = await client.get(location)
             description_response.raise_for_status()
             root = ElementTree.fromstring(description_response.content)

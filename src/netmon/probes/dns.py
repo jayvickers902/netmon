@@ -36,7 +36,7 @@ class ResolverDnsProbe:
         elapsed = (self.clock.monotonic() - started) * 1000
         if result[0] == "ok":
             return DnsResult(resolver, name, result[0], elapsed, tuple(result[1]))
-        return DnsResult(resolver, name, result[0], None, ())
+        return DnsResult(resolver, name, result[0], elapsed, ())
 
     def _resolve_sync(self, resolver: str, name: str) -> tuple[str, list[str]]:
         client = dns.resolver.Resolver(configure=False)
