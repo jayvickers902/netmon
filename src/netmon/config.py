@@ -52,11 +52,15 @@ class OutageConfig(BaseModel):
     failures_to_open: int = Field(default=3, ge=1)
     successes_to_close: int = Field(default=2, ge=1)
     traceroute_on_open: bool = True
+    traceroute_timeout_seconds: float = Field(default=30.0, gt=0)
+    traceroute_max_hops: int = Field(default=30, ge=1, le=128)
 
 
 class WanConfig(BaseModel):
     enabled: bool = True
     interval_seconds: float = Field(default=30.0, gt=0)
+    gateway: str | None = None
+    lan_ip: str | None = None
 
 
 class SpeedtestConfig(BaseModel):

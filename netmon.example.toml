@@ -42,11 +42,16 @@ failures_to_open = 3
 successes_to_close = 2
 # Capture a traceroute when an outage opens.
 traceroute_on_open = true
+traceroute_timeout_seconds = 30
+traceroute_max_hops = 30
 
 [wan]
-# UPnP IGD byte counters. Availability depends on the router; see docs/spike-upnp.md.
+# UPnP WAN connection status only; this router does not provide byte counters.
+# Leave gateway and lan_ip empty to derive them from the host's default route.
 enabled = true
 interval_seconds = 30
+# gateway = "192.168.4.1"
+# lan_ip = "192.168.4.143"
 
 [speedtest]
 # Saturates the link while running — keep this infrequent.

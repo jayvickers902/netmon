@@ -1,0 +1,11 @@
+<root xmlns="urn:schemas-upnp-org:device-1-0">
+  <device>
+    <deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType>
+    <deviceList><device><serviceList>
+      <service>
+        <serviceType>urn:schemas-upnp-org:service:WANIPConnection:1</serviceType>
+        <controlURL>/ipc</controlURL>
+      </service>
+    </serviceList></device></deviceList>
+  </device>
+</root>

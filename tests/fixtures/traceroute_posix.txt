@@ -1,0 +1,4 @@
+traceroute to example.com (93.184.216.34), 30 hops max, 60 byte packets
+ 1  192.168.4.1  1.102 ms  1.044 ms  1.087 ms
+ 2  * * *
+ 3  edge.example (203.0.113.1)  12.5 ms  13.1 ms  12.8 ms

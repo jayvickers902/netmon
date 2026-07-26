@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from netmon.models import DeviceObservation, Sample
+from netmon.models import DeviceObservation, Event, Sample
 
 from .migrations import migrate
 
@@ -176,21 +176,119 @@ class Store:
         }
 
     def list_events(self, limit: int = 100) -> list[dict[str, Any]]:
+        return self.list_filtered_events(limit=limit)
+
+    def record_event(self, event: Event) -> int:
         with self.connection() as connection:
+            cursor = connection.execute(
+                "INSERT INTO event(ts, kind, device_id, severity, message, details_json) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    event.ts.timestamp(),
+                    event.kind,
+                    event.device_id,
+                    event.severity,
+                    event.message,
+                    json.dumps(event.details),
+                ),
+            )
+            assert cursor.lastrowid is not None
+            return int(cursor.lastrowid)
+
+    def update_event_details(self, event_id: int, details: dict[str, Any]) -> None:
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE event SET details_json=? WHERE id=?",
+                (json.dumps(details), event_id),
+            )
+
+    def get_event(self, event_id: int) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT id, ts, kind, device_id, severity, message, details_json "
+                "FROM event WHERE id=?",
+                (event_id,),
+            ).fetchone()
+            return None if row is None else self._event_dict(row)
+
+    def list_filtered_events(
+        self,
+        limit: int = 100,
+        kind: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+    ) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            clauses: list[str] = []
+            parameters: list[Any] = []
+            if kind is not None:
+                clauses.append("kind=?")
+                parameters.append(kind)
+            if start is not None:
+                clauses.append("ts>=?")
+                parameters.append(start.timestamp())
+            if end is not None:
+                clauses.append("ts<=?")
+                parameters.append(end.timestamp())
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            parameters.append(limit)
             rows = connection.execute(
                 "SELECT id, ts, kind, device_id, severity, message, details_json "
-                "FROM event ORDER BY ts DESC, id DESC LIMIT ?",
-                (limit,),
+                f"FROM event {where} ORDER BY ts DESC, id DESC LIMIT ?",
+                parameters,
+            ).fetchall()
+            return [self._event_dict(row) for row in rows]
+
+    @staticmethod
+    def _event_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "ts": row["ts"],
+            "kind": row["kind"],
+            "device_id": row["device_id"],
+            "severity": row["severity"],
+            "message": row["message"],
+            "details": json.loads(row["details_json"]),
+        }
+
+    def list_metrics(
+        self,
+        kind: str | None = None,
+        target: str | None = None,
+        start: datetime | None = None,
+        end: datetime | None = None,
+        limit: int = 10000,
+    ) -> list[dict[str, Any]]:
+        with self.connection() as connection:
+            clauses: list[str] = []
+            parameters: list[Any] = []
+            if kind is not None:
+                clauses.append("metric.kind=?")
+                parameters.append(kind)
+            if target is not None:
+                clauses.append("metric.target=?")
+                parameters.append(target)
+            if start is not None:
+                clauses.append("sample.ts>=?")
+                parameters.append(start.timestamp())
+            if end is not None:
+                clauses.append("sample.ts<=?")
+                parameters.append(end.timestamp())
+            where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+            parameters.append(limit)
+            rows = connection.execute(
+                "SELECT metric.kind, metric.target, metric.unit, sample.ts, sample.value "
+                "FROM sample JOIN metric ON metric.id=sample.metric_id "
+                f"{where} ORDER BY sample.ts ASC LIMIT ?",
+                parameters,
             ).fetchall()
             return [
                 {
-                    "id": row["id"],
-                    "ts": row["ts"],
                     "kind": row["kind"],
-                    "device_id": row["device_id"],
-                    "severity": row["severity"],
-                    "message": row["message"],
-                    "details": json.loads(row["details_json"]),
+                    "target": row["target"],
+                    "unit": row["unit"],
+                    "ts": row["ts"],
+                    "value": row["value"],
                 }
                 for row in rows
             ]
