@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import secrets
 from pathlib import Path
 
 import uvicorn
@@ -14,10 +15,16 @@ from netmon.probes.eero_cloud import EeroCloudError, EeroCloudProbe, HttpxEeroTr
 
 
 def main() -> None:
-    settings = NetmonSettings()
     parser = argparse.ArgumentParser(prog="netmon")
-    parser.add_argument("command", nargs="?", choices=["eero-login"])
+    parser.add_argument("command", nargs="?", choices=["eero-login", "gen-token"])
     args = parser.parse_args()
+    if args.command == "gen-token":
+        print(secrets.token_urlsafe(32))
+        print(
+            "Put this value in [api] token or NETMON_API__TOKEN; it is not written automatically."
+        )
+        return
+    settings = NetmonSettings()
     if args.command == "eero-login":
         asyncio.run(_eero_login(settings.eero.base_url, settings.eero.token_path))
         return

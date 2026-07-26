@@ -5,6 +5,14 @@
 host = "127.0.0.1"
 port = 8787
 
+[api]
+# Loopback requests stay unauthenticated so the existing local dashboard needs no login.
+# This is deliberate: anyone with a local shell already has access to the SQLite file.
+allow_loopback_unauthenticated = true
+# Set this for LAN access. Use `netmon gen-token`; never put a token in a query string,
+# because URLs are copied into browser history and server/proxy logs.
+# token = "paste-generated-token-here"
+
 [database]
 path = "data/netmon.db"
 

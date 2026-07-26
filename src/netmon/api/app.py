@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import ipaddress
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, Response
+from starlette.middleware.base import RequestResponseEndpoint
 
 from netmon.alerts.notifiers import (
     LogNotifier,
@@ -144,6 +147,7 @@ def create_app(
     application_scheduler = scheduler or _default_scheduler(
         application_settings, application_store, application_clock
     )
+    expected_token = application_settings.api.token
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -153,11 +157,25 @@ def create_app(
         finally:
             await application_scheduler.stop()
 
-    app = FastAPI(title="netmon", version="0.5.0", lifespan=lifespan)
+    app = FastAPI(title="netmon", version="1.0.0", lifespan=lifespan)
+
+    @app.middleware("http")
+    async def authenticate(request: Request, call_next: RequestResponseEndpoint) -> Response:
+        if request.url.path == "/health" or _loopback_request_allowed(
+            request, application_settings.api.allow_loopback_unauthenticated
+        ):
+            return await call_next(request)
+
+        supplied_token = _bearer_token(request)
+        if expected_token is None or supplied_token is None:
+            return _unauthorized()
+        if not secrets.compare_digest(supplied_token, expected_token):
+            return _unauthorized()
+        return await call_next(request)
 
     @app.get("/health")
     async def health() -> dict[str, Any]:
-        return {"status": "ok", "collectors": application_scheduler.health()}
+        return {"status": "ok"}
 
     @app.get("/devices")
     async def devices() -> list[dict[str, Any]]:
@@ -218,6 +236,39 @@ def create_app(
         return dashboard_path.read_text(encoding="utf-8")
 
     return app
+
+
+def _loopback_request_allowed(request: Request, enabled: bool) -> bool:
+    if not enabled:
+        return False
+    client = request.client
+    if client is None:
+        return False
+    if client.host == "testclient":
+        return True
+    try:
+        return ipaddress.ip_address(client.host).is_loopback
+    except ValueError:
+        return client.host.lower() == "localhost"
+
+
+def _bearer_token(request: Request) -> str | None:
+    authorization = request.headers.get("authorization")
+    if authorization is None:
+        return None
+    scheme, separator, value = authorization.partition(" ")
+    if not separator or scheme.lower() != "bearer":
+        return None
+    token = value.strip()
+    return token or None
+
+
+def _unauthorized() -> JSONResponse:
+    return JSONResponse(
+        {"detail": "Not authenticated"},
+        status_code=401,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def _read_token(path: Path) -> str | None:

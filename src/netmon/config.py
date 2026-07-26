@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import tomllib
 from pathlib import Path
@@ -14,6 +15,17 @@ from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, Settings
 class ServerConfig(BaseModel):
     host: str = "127.0.0.1"
     port: int = Field(default=8787, ge=1, le=65535)
+
+
+class ApiConfig(BaseModel):
+    token: str | None = None
+    allow_loopback_unauthenticated: bool = True
+
+    @model_validator(mode="after")
+    def normalize_token(self) -> ApiConfig:
+        if self.token is not None:
+            self.token = self.token.strip() or None
+        return self
 
 
 class DatabaseConfig(BaseModel):
@@ -163,6 +175,7 @@ class NetmonSettings(BaseSettings):
     config_path: ClassVar[Path] = Path("netmon.toml")
 
     server: ServerConfig = Field(default_factory=ServerConfig)
+    api: ApiConfig = Field(default_factory=ApiConfig)
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
     discovery: DiscoveryConfig = Field(default_factory=DiscoveryConfig)
     latency: LatencyConfig = Field(default_factory=LatencyConfig)
@@ -177,6 +190,14 @@ class NetmonSettings(BaseSettings):
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     throttle: ThrottleConfig = Field(default_factory=ThrottleConfig)
 
+    @model_validator(mode="after")
+    def safe_api_binding(self) -> NetmonSettings:
+        if self.api.token is None and not _is_loopback_host(self.server.host):
+            raise ValueError(
+                "api.token (NETMON_API__TOKEN) is required when server.host is not loopback"
+            )
+        return self
+
     @classmethod
     def settings_customise_sources(
         cls,
@@ -189,3 +210,13 @@ class NetmonSettings(BaseSettings):
         del settings_cls, dotenv_settings, file_secret_settings
         path = Path(os.environ.get("NETMON_CONFIG", str(cls.config_path)))
         return init_settings, env_settings, TomlSettingsSource(path)
+
+
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower().removesuffix(".")
+    if normalized == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
