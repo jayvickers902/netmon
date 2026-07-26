@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - v0.2 discovery: injectable ICMP/ARP/OUI/hostname probes, bounded subnet discovery, device
   presence events, REST device/event endpoints, and a dependency-free dashboard.
 
+### Fixed
+
+- Windows ICMP probe reported every host as unreachable. `IcmpCreateFile` returns a 64-bit
+  HANDLE, but no `restype` was declared, so ctypes truncated it to 32 bits; the truncated
+  value is not `INVALID_HANDLE_VALUE`, so it passed validation and every `IcmpSendEcho` then
+  failed against a garbage handle. The reply buffer was also sized to `ICMP_ECHO_REPLY` alone,
+  with no room for the echoed payload. Latency collection and the outage classifier were
+  affected — a healthy network could be classified as a local problem. The Windows path had no
+  test coverage, which is how it shipped; it now has signature and buffer-contract regression
+  tests.
+
 ### Changed
 
 - v0.1 UPnP spike answered against the live network and written up in `docs/spike-upnp.md`.
