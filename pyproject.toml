@@ -56,6 +56,9 @@ branch = true
 [tool.ruff]
 line-length = 100
 src = ["src", "tests"]
+# Sandboxed agent runs drop a pytest basetemp here with a restrictive DACL that
+# ruff cannot traverse; it is not source and never needs linting.
+extend-exclude = ["_pytesttmp"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF", "ASYNC"]

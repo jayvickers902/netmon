@@ -37,7 +37,7 @@ Know what's on the network.
 - [x] `GET /devices`, `GET /devices/{id}`, device join/depart events
 - [x] Dashboard: live device list with vendor, hostname, last-seen, online indicator
 
-## v0.3 — Connection health `[ ]`
+## v0.3 — Connection health `[x]`
 
 The troubleshooting payoff. This is the phase that earns the tool its keep.
 
