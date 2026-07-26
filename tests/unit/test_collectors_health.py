@@ -75,7 +75,7 @@ async def test_dns_http_and_wan_collectors_emit_samples(frozen_clock):
         Http(), frozen_clock, HttpConfig(urls=["https://example.com"]), observations.append
     )
     events = []
-    wan = WanStatusCollector(Upnp(), frozen_clock, WanConfig(), events.append, lambda status: None)
+    wan = WanStatusCollector(Upnp(), frozen_clock, WanConfig(), events.append)
     assert (await dns.collect())[0].value == 4.0
     assert (await http.collect())[1].value == 204.0
     await wan.collect()

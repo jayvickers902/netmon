@@ -107,6 +107,7 @@ def test_coordinator_attaches_background_traceroute(frozen_clock):
             traceroute=Trace(),
             event_update=lambda event_id, details: updates.append((event_id, details)),
         )
+        await coordinator.observe(observation("icmp", "gateway", True, 0))
         await coordinator.observe(observation("icmp", "1.1.1.1", False, 0))
         tasks = tuple(coordinator._trace_tasks)
         if tasks:
