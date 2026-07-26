@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import socket
-import sys
 from typing import Protocol
 
 
@@ -15,19 +14,21 @@ class HostnameProbe(Protocol):
 class SystemHostnameProbe:
     async def resolve(self, ip: str) -> str | None:
         try:
-            name, _, _ = await asyncio.to_thread(socket.gethostbyaddr, ip)
-            return name.rstrip(".")
+            resolved_name, _, _ = await asyncio.to_thread(socket.gethostbyaddr, ip)
+            return resolved_name.rstrip(".")
         except OSError:
             pass
-        if sys.platform == "win32":
-            return await self._netbios(ip)
-        return await self._mdns(ip)
+        name = await self._netbios(ip)
+        return name if name is not None else await self._mdns(ip)
 
     @staticmethod
     async def _netbios(ip: str) -> str | None:
-        process = await asyncio.create_subprocess_exec(
-            "nbtstat", "-A", ip, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
-        )
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "nbtstat", "-A", ip, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+        except OSError:
+            return None
         stdout, _ = await process.communicate()
         for line in stdout.decode(errors="replace").splitlines():
             if "<00>" in line and "UNIQUE" in line:
@@ -36,7 +37,20 @@ class SystemHostnameProbe:
 
     @staticmethod
     async def _mdns(ip: str) -> str | None:
-        del ip
+        try:
+            process = await asyncio.create_subprocess_exec(
+                "avahi-resolve-address",
+                ip,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        except OSError:
+            return None
+        stdout, _ = await process.communicate()
+        if process.returncode == 0:
+            parts = stdout.decode(errors="replace").split()
+            if parts:
+                return parts[-1].rstrip(".")
         return None
 
 

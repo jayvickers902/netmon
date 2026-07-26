@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,17 +22,32 @@ def _stamp(value: datetime) -> str:
 class Store:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
+        self._memory_connection: sqlite3.Connection | None = None
         if str(path) != ":memory:":
             self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as connection:
             migrate(connection)
 
-    def connection(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.path if str(self.path) != ":memory:" else ":memory:")
-        connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA journal_mode=WAL")
-        connection.execute("PRAGMA foreign_keys=ON")
-        return connection
+    @contextmanager
+    def connection(self) -> Iterator[sqlite3.Connection]:
+        is_memory = str(self.path) == ":memory:"
+        if is_memory:
+            if self._memory_connection is None:
+                self._memory_connection = sqlite3.connect(":memory:")
+                self._memory_connection.row_factory = sqlite3.Row
+                self._memory_connection.execute("PRAGMA foreign_keys=ON")
+            connection = self._memory_connection
+        else:
+            connection = sqlite3.connect(self.path)
+            connection.row_factory = sqlite3.Row
+            connection.execute("PRAGMA journal_mode=WAL")
+            connection.execute("PRAGMA foreign_keys=ON")
+        try:
+            yield connection
+            connection.commit()
+        finally:
+            if not is_memory:
+                connection.close()
 
     def persist_samples(self, samples: Iterable[Sample]) -> None:
         with self.connection() as connection:
@@ -67,12 +83,15 @@ class Store:
                         "VALUES (?, ?, ?, ?, ?)",
                         (mac, stamp, stamp, observation.vendor, observation.hostname),
                     )
-                    device_id = int(cursor.lastrowid)
+                    assert cursor.lastrowid is not None
+                    device_id = cursor.lastrowid
                     self._event(connection, now, "device_join", device_id, "info", "Device joined")
                 else:
                     device_id = int(row["id"])
                     if not bool(row["is_online"]):
-                        self._event(connection, now, "device_join", device_id, "info", "Device returned")
+                        self._event(
+                            connection, now, "device_join", device_id, "info", "Device returned"
+                        )
                     connection.execute(
                         "UPDATE device SET last_seen=?, vendor=COALESCE(?, vendor), "
                         "hostname=COALESCE(?, hostname), missed_sweeps=0, is_online=1 WHERE id=?",
@@ -84,7 +103,9 @@ class Store:
                     (device_id, observation.ip, stamp),
                 )
 
-            tracked = connection.execute("SELECT id, mac, missed_sweeps, is_online FROM device").fetchall()
+            tracked = connection.execute(
+                "SELECT id, mac, missed_sweeps, is_online FROM device"
+            ).fetchall()
             for row in tracked:
                 if row["mac"] in seen_macs or not bool(row["is_online"]):
                     continue
@@ -116,7 +137,8 @@ class Store:
         details: dict[str, Any] | None = None,
     ) -> None:
         connection.execute(
-            "INSERT INTO event(ts, kind, device_id, severity, message, details_json) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO event(ts, kind, device_id, severity, message, details_json) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
             (now.timestamp(), kind, device_id, severity, message, json.dumps(details or {})),
         )
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
 from netmon.models import Sample
@@ -20,7 +20,7 @@ class Clock(Protocol):
 
 class RealClock:
     def now(self) -> datetime:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
     def monotonic(self) -> float:
         return asyncio.get_running_loop().time()

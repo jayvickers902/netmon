@@ -42,7 +42,7 @@ class WindowsIcmpProbe:
 
         try:
             address = ipaddress.IPv4Address(ip)
-            iphlpapi = ctypes.WinDLL("iphlpapi.dll")  # type: ignore[attr-defined]
+            iphlpapi = ctypes.WinDLL("iphlpapi.dll")
             handle = iphlpapi.IcmpCreateFile()
             if handle == ctypes.c_void_p(-1).value:
                 return IcmpResult(False, None)

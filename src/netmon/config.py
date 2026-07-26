@@ -42,7 +42,9 @@ class DnsConfig(BaseModel):
 
 class HttpConfig(BaseModel):
     interval_seconds: float = Field(default=60.0, gt=0)
-    urls: list[HttpUrl] = Field(default_factory=lambda: [HttpUrl("https://www.google.com/generate_204")])
+    urls: list[HttpUrl] = Field(
+        default_factory=lambda: [HttpUrl("https://www.google.com/generate_204")]
+    )
     timeout_seconds: float = Field(default=5.0, gt=0)
 
 
@@ -94,7 +96,9 @@ class TomlSettingsSource:
 class NetmonSettings(BaseSettings):
     """Application settings, loaded from TOML and then environment variables."""
 
-    model_config = SettingsConfigDict(env_prefix="NETMON_", env_nested_delimiter="__", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="NETMON_", env_nested_delimiter="__", extra="ignore"
+    )
     config_path: ClassVar[Path] = Path("netmon.toml")
 
     server: ServerConfig = Field(default_factory=ServerConfig)

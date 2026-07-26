@@ -8,15 +8,17 @@ Save the following as `spike_upnp.py` and run it from the netmon host:
 ```python
 import socket
 
-MESSAGE = "\\r\\n".join([
-    "M-SEARCH * HTTP/1.1",
-    "HOST: 239.255.255.250:1900",
-    "MAN: \"ssdp:discover\"",
-    "MX: 3",
-    "ST: urn:schemas-upnp-org:service:WANCommonInterfaceConfig:1",
-    "",
-    "",
-]).encode()
+MESSAGE = "\\r\\n".join(
+    [
+        "M-SEARCH * HTTP/1.1",
+        "HOST: 239.255.255.250:1900",
+        'MAN: "ssdp:discover"',
+        "MX: 3",
+        "ST: urn:schemas-upnp-org:service:WANCommonInterfaceConfig:1",
+        "",
+        "",
+    ]
+).encode()
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
 sock.settimeout(5)

@@ -39,13 +39,18 @@ class Scheduler:
         self.clock = clock or RealClock()
         self.startup_jitter = startup_jitter
         self.max_backoff = max_backoff
-        self.statuses = {collector.name: CollectorStatus(collector.name) for collector in collectors}
+        self.statuses = {
+            collector.name: CollectorStatus(collector.name) for collector in collectors
+        }
         self._tasks: list[asyncio.Task[None]] = []
 
     async def start(self) -> None:
         if self._tasks:
             return
-        self._tasks = [asyncio.create_task(self._run(collector), name=f"collector:{collector.name}") for collector in self.collectors]
+        self._tasks = [
+            asyncio.create_task(self._run(collector), name=f"collector:{collector.name}")
+            for collector in self.collectors
+        ]
 
     async def stop(self) -> None:
         tasks, self._tasks = self._tasks, []
@@ -85,7 +90,7 @@ class Scheduler:
                 await self.clock.sleep(collector.interval)
             except asyncio.CancelledError:
                 raise
-            except Exception as error:  # noqa: BLE001 - isolation is the supervisor's job
+            except Exception as error:
                 failures += 1
                 status.consecutive_failures = failures
                 status.last_error = str(error)

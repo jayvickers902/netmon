@@ -6,8 +6,8 @@ import asyncio
 import ctypes
 import ipaddress
 import re
-import subprocess
 import sys
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -46,7 +46,7 @@ def parse_get_ip_net_table(data: bytes) -> list[ArpEntry]:
             break
         physical_length = int.from_bytes(data[offset + 4 : offset + 8], "little")
         physical = data[offset + 8 : offset + 16][:physical_length]
-        raw_ip = int.from_bytes(data[offset + 16 : offset + 20], "little")
+        raw_ip = data[offset + 16 : offset + 20]
         if physical_length >= 6:
             entries.append(
                 ArpEntry(
@@ -101,7 +101,7 @@ class WindowsArpProbe:
 
     @staticmethod
     def _get_ip_net_table() -> list[ArpEntry]:
-        iphlpapi = ctypes.WinDLL("iphlpapi.dll")  # type: ignore[attr-defined]
+        iphlpapi = ctypes.WinDLL("iphlpapi.dll")
         function = iphlpapi.GetIpNetTable
         size = ctypes.c_ulong(0)
         result = function(None, ctypes.byref(size), False)
@@ -148,7 +148,7 @@ class SystemInterfaceProbe:
         return await asyncio.to_thread(self._read_subnets, psutil.net_if_addrs())
 
     @staticmethod
-    def _read_subnets(addresses: dict[str, list[object]]) -> list[ipaddress.IPv4Network]:
+    def _read_subnets(addresses: Mapping[str, Sequence[object]]) -> list[ipaddress.IPv4Network]:
         result: set[ipaddress.IPv4Network] = set()
         for interface_addresses in addresses.values():
             for address in interface_addresses:
