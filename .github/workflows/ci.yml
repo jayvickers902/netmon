@@ -6,7 +6,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # netmon targets Windows: it installs as a Task Scheduler job, pings via
+    # IcmpSendEcho, reads the ARP cache via GetIpNetTable, and notifies through
+    # Windows toasts. Checking on Linux would type-check a configuration that is
+    # never shipped, and would leave the ctypes paths that actually run untested.
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
