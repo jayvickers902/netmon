@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>netmon</title>
+  <style>
+    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+    body { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { padding: .65rem; text-align: left; border-bottom: 1px solid #8885; }
+    .dot { display: inline-block; width: .65rem; height: .65rem; border-radius: 50%; background: #e55; }
+    .online .dot { background: #2b5; }
+    small { opacity: .75; }
+  </style>
+</head>
+<body>
+  <h1>netmon</h1>
+  <p id="status">Loading devices…</p>
+  <table>
+    <thead><tr><th>Online</th><th>Vendor</th><th>Hostname</th><th>IP</th><th>MAC</th><th>Last seen</th></tr></thead>
+    <tbody id="devices"><tr><td colspan="6">Loading…</td></tr></tbody>
+  </table>
+  <script>
+    const tbody = document.getElementById('devices');
+    const status = document.getElementById('status');
+    const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    async function refresh() {
+      try {
+        const devices = await fetch('/devices').then((response) => response.json());
+        status.textContent = `${devices.length} device${devices.length === 1 ? '' : 's'}`;
+        tbody.innerHTML = devices.map((device) => `<tr class="${device.online ? 'online' : ''}">
+          <td><span class="dot" title="${device.online ? 'Online' : 'Offline'}"></span></td>
+          <td>${escapeHtml(device.vendor || 'Unknown')}</td>
+          <td>${escapeHtml(device.hostname || '—')}</td>
+          <td>${escapeHtml((device.ips || []).map((ip) => ip.ip).join(', ') || '—')}</td>
+          <td><code>${escapeHtml(device.mac)}</code></td>
+          <td><small>${escapeHtml(device.last_seen)}</small></td>
+        </tr>`).join('') || '<tr><td colspan="6">No devices discovered yet.</td></tr>';
+      } catch (error) { status.textContent = 'Unable to load devices'; }
+    }
+    refresh();
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>

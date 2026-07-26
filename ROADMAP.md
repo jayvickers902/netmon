@@ -7,33 +7,33 @@ Legend: `[ ]` not started · `[~]` in progress · `[x]` shipped
 
 ---
 
-## v0.1 — Foundation `[ ]`
+## v0.1 — Foundation `[x]`
 
 Scaffolding and the skeleton everything else hangs off.
 
-- [ ] `pyproject.toml` with uv, ruff, mypy, pytest, coverage config
-- [ ] `config.py` — pydantic-settings loading `netmon.toml`, with schema validation
-- [ ] SQLite store: WAL mode, connection management, `schema.sql`, forward-only migrations
-- [ ] `scheduler.py` — asyncio supervisor with per-collector intervals, startup jitter,
+- [x] `pyproject.toml` with uv, ruff, mypy, pytest, coverage config
+- [x] `config.py` — pydantic-settings loading `netmon.toml`, with schema validation
+- [x] SQLite store: WAL mode, connection management, `schema.sql`, forward-only migrations
+- [x] `scheduler.py` — asyncio supervisor with per-collector intervals, startup jitter,
       exponential backoff, and failure isolation (one bad collector must not stop the others)
-- [ ] FastAPI app with lifespan-managed scheduler, `/health`
-- [ ] CI: lint, typecheck, test on push
-- [ ] **Spike:** SSDP M-SEARCH against the local router to determine whether it exposes
+- [x] FastAPI app with lifespan-managed scheduler, `/health`
+- [x] CI: lint, typecheck, test on push
+- [x] **Spike:** SSDP M-SEARCH against the local router to determine whether it exposes
       `WANCommonInterfaceConfig` byte counters. Record the finding in `docs/spike-upnp.md`.
       This gates the v0.4 bandwidth approach and must be answered early.
 
-## v0.2 — Discovery `[ ]`
+## v0.2 — Discovery `[x]`
 
 Know what's on the network.
 
-- [ ] `probes/arp.py` — `GetIpNetTable` via ctypes on Windows, `ip neigh`/`arp -a` fallback
-- [ ] `probes/icmp.py` — `IcmpSendEcho` via ctypes on Windows, POSIX fallback; no admin needed
-- [ ] `probes/oui.py` — bundled OUI database, MAC → vendor lookup
-- [ ] `collectors/discovery.py` — subnet sweep, ARP correlation, hostname resolution
+- [x] `probes/arp.py` — `GetIpNetTable` via ctypes on Windows, `ip neigh`/`arp -a` fallback
+- [x] `probes/icmp.py` — `IcmpSendEcho` via ctypes on Windows, POSIX fallback; no admin needed
+- [x] `probes/oui.py` — bundled OUI database, MAC → vendor lookup
+- [x] `collectors/discovery.py` — subnet sweep, ARP correlation, hostname resolution
       (reverse DNS, mDNS, NetBIOS)
-- [ ] Device identity keyed by **MAC**, not IP — DHCP leases move
-- [ ] `GET /devices`, `GET /devices/{id}`, device join/depart events
-- [ ] Dashboard: live device list with vendor, hostname, last-seen, online indicator
+- [x] Device identity keyed by **MAC**, not IP — DHCP leases move
+- [x] `GET /devices`, `GET /devices/{id}`, device join/depart events
+- [x] Dashboard: live device list with vendor, hostname, last-seen, online indicator
 
 ## v0.3 — Connection health `[ ]`
 
