@@ -111,37 +111,52 @@ Event kinds present: `device_join`, `device_depart`, `outage_start`, `outage_end
 This section matters more than §5. Designing against the optimistic version of this product
 would produce something that cannot be built.
 
-**Devices have a category, but not an identity.** The device table holds 18 rows, of which
-**16 are real** — `00:00:00:00:00:00` and `ff:ff:ff:ff:ff:ff` are the unspecified and broadcast
-addresses, ARP artefacts that discovery does not currently filter out. Of the real devices:
+**Devices have a category, but not an identity.** After a full discovery sweep the table holds
+**26 rows**. Counts drift as devices come and go; the proportions below are the stable part.
 
-- **16 of 18 resolve to a vendor.** The full IEEE registry is now bundled, so this is as good
-  as it will get. One device uses a privacy-randomised MAC and will never resolve; no registry
-  can fix that.
-- **6 of 18 have a hostname.** Reverse DNS and NetBIOS work; mDNS does not run on Windows, so
-  Apple and IoT devices resolve to nothing.
+- **16 resolve to a vendor.** The complete IEEE registry is bundled, so this is close to the
+  ceiling. Vendor is written when a device is *observed*, so a row stays blank until its next
+  sighting.
+- **6 have a hostname.** Reverse DNS and NetBIOS work; mDNS does not run on Windows, so Apple
+  and IoT devices resolve to nothing.
 - **0 have a label.** A `label` column exists in the schema but nothing reads or writes it —
   there is no way for a person to name a device.
 
-So the device list reads like this:
+The 10 unresolved rows break down as **4 privacy-randomised MACs** (locally-administered bit
+set — phones, and no registry will ever resolve them), **1 ARP artefact**, and **5 devices not
+yet re-observed** since the registry landed. Two further rows are junk that discovery does not
+filter: `ff:ff:ff:ff:ff:ff` is the broadcast address, and `00:00:00:00:00:00` renders as
+**"XEROX CORPORATION"** — technically correct, since Xerox holds the `00-00-00` registration,
+and complete nonsense to a reader.
+
+So the real list reads like this:
 
 ```
-eero inc.                    34:bc:5e:b7:44:ed    -
-Amazon Technologies Inc.     6c:99:9d:70:fe:b5    -
-Amazon Technologies Inc.     90:a8:22:fa:8d:bb    -
-Roku, Inc                    60:92:c8:49:b1:d0    -
-Roku, Inc                    d4:be:dc:eb:2b:c2    -
-CLOUD NETWORK TECHNOLOGY…    ec:91:61:96:b1:97    BRWEC916196B197
-(unknown)                    c2:2a:4a:43:fc:29    -
+eero inc.                     34:bc:5e:b7:44:ed   -
+eero inc.                     34:bc:5e:8e:dd:cd   -
+eero inc.                     34:bc:5e:b6:30:0d   -
+Amazon Technologies Inc.      6c:99:9d:70:fe:b5   -
+Amazon Technologies Inc.      90:a8:22:fa:8d:bb   -
+Roku, Inc                     d4:be:dc:eb:2b:c2   -
+iRobot Corporation            50:14:79:0a:b1:59   -
+Ooma, Inc.                    00:18:61:55:4b:c9   -
+Espressif Inc.                30:ed:a0:cc:05:d8   -
+CLOUD NETWORK TECHNOLOGY…     ec:91:61:96:b1:97   BRWEC916196B197
+XEROX CORPORATION             00:00:00:00:00:00   -
+(unknown)                     c2:2a:4a:43:fc:29   -
+(unknown)                     8e:4d:d5:5b:d2:73   -
 ```
 
 That is the actual shape of the problem, and it is more interesting than "no data". A vendor
-name tells you *what kind of thing* something is; it does not tell you *which* thing. Two
-Rokus and two Amazon devices are mutually indistinguishable, the household's Brother printer
-appears as its ODM rather than its brand, and the one device someone actually cares about
-identifying — a phone — is the one that resolves to nothing at all. Turning this list into
-something a person recognises is the single biggest open design problem, and it cannot be
-solved with better data collection.
+name tells you *what kind of thing* something is; it does not tell you *which* thing. Three of
+the rows are the eero mesh nodes themselves. Two Amazon devices are mutually indistinguishable.
+The household's Brother printer appears as its ODM. An `Espressif Inc.` row is some ESP32 in a
+smart plug or sensor that nobody remembers installing. And the four devices someone would most
+want to identify — the phones — are precisely the ones that resolve to nothing, permanently, by
+design.
+
+Turning this into a list a person recognises is the single biggest open design problem, and no
+amount of better data collection will solve it.
 
 **The router's WAN signal cannot be trusted.** During a real two-minute WAN disconnection the
 eero reported `Connected` throughout and its uptime counter advanced 1,547,273 → 1,547,443 —
