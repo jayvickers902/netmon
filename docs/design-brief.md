@@ -111,16 +111,37 @@ Event kinds present: `device_join`, `device_depart`, `outage_start`, `outage_end
 This section matters more than §5. Designing against the optimistic version of this product
 would produce something that cannot be built.
 
-**Device identity is effectively absent.** Of 18 discovered devices:
-- **0 have a vendor name.** The bundled IEEE OUI table is a 26-row placeholder and resolves
-  none of this network's prefixes.
+**Devices have a category, but not an identity.** The device table holds 18 rows, of which
+**16 are real** — `00:00:00:00:00:00` and `ff:ff:ff:ff:ff:ff` are the unspecified and broadcast
+addresses, ARP artefacts that discovery does not currently filter out. Of the real devices:
+
+- **16 of 18 resolve to a vendor.** The full IEEE registry is now bundled, so this is as good
+  as it will get. One device uses a privacy-randomised MAC and will never resolve; no registry
+  can fix that.
 - **6 of 18 have a hostname.** Reverse DNS and NetBIOS work; mDNS does not run on Windows, so
   Apple and IoT devices resolve to nothing.
 - **0 have a label.** A `label` column exists in the schema but nothing reads or writes it —
   there is no way for a person to name a device.
 
-The realistic device list today is **18 rows of raw hex** like `34:bc:5e:b7:44:ed`. Not
-"Living Room Apple TV". This is the single biggest open design problem.
+So the device list reads like this:
+
+```
+eero inc.                    34:bc:5e:b7:44:ed    -
+Amazon Technologies Inc.     6c:99:9d:70:fe:b5    -
+Amazon Technologies Inc.     90:a8:22:fa:8d:bb    -
+Roku, Inc                    60:92:c8:49:b1:d0    -
+Roku, Inc                    d4:be:dc:eb:2b:c2    -
+CLOUD NETWORK TECHNOLOGY…    ec:91:61:96:b1:97    BRWEC916196B197
+(unknown)                    c2:2a:4a:43:fc:29    -
+```
+
+That is the actual shape of the problem, and it is more interesting than "no data". A vendor
+name tells you *what kind of thing* something is; it does not tell you *which* thing. Two
+Rokus and two Amazon devices are mutually indistinguishable, the household's Brother printer
+appears as its ODM rather than its brand, and the one device someone actually cares about
+identifying — a phone — is the one that resolves to nothing at all. Turning this list into
+something a person recognises is the single biggest open design problem, and it cannot be
+solved with better data collection.
 
 **The router's WAN signal cannot be trusted.** During a real two-minute WAN disconnection the
 eero reported `Connected` throughout and its uptime counter advanced 1,547,273 → 1,547,443 —
@@ -186,9 +207,10 @@ reported by X" — different findings that should not render the same way.
 
 Ranked by how much they affect what can be built:
 
-1. **Device identity.** 18 rows of hex, no vendors, a third with hostnames, no labelling
-   mechanism. Is the device list a first-class surface or a secondary one? If naming matters,
-   it needs the first write endpoint in the product.
+1. **Device identity.** Vendors resolve, but duplicates are indistinguishable and no labelling
+   mechanism exists. Is the device list a first-class surface or a secondary one? If naming
+   matters — and it probably does, since throttling in §9 is meaningless until a person can
+   say *which* device — it needs the first write endpoint in the product.
 2. **Expressing uncertainty.** The most honest verdict is often "something is wrong and here is
    what corroborates it." Reducing that to a green/red dot throws away the useful part.
 3. **The empty state is the normal state.** A healthy home network produces a flat chart, no
