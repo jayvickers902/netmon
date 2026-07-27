@@ -57,6 +57,7 @@ def _default_scheduler(settings: NetmonSettings, store: Store, clock: Clock) -> 
     machine = OutageStateMachine(
         failures_to_open=settings.outage.failures_to_open,
         successes_to_close=settings.outage.successes_to_close,
+        wan_interval_seconds=settings.wan.interval_seconds,
     )
     coordinator = OutageCoordinator(
         machine,

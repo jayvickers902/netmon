@@ -25,7 +25,8 @@ def test_hysteresis_uses_first_failure_timestamp_and_records_duration():
     assert machine.record(observation("icmp", "gateway", True, 3)) == []
     end = machine.record(observation("icmp", "gateway", True, 4))[0]
     assert end.kind == "outage_end"
-    assert end.details["duration_seconds"] == 4
+    assert end.ts == BASE + timedelta(seconds=3)
+    assert end.details["duration_seconds"] == 3
 
 
 def test_failure_streak_recovery_one_short_of_threshold_does_not_open():
@@ -85,6 +86,129 @@ def test_wan_uptime_reset_is_advisory_event():
     assert events[0].kind == "wan_reconnect"
     assert events[0].details["previous_uptime"] == 100
     assert machine.status().wan["reconnected_at"] == (BASE + timedelta(seconds=1)).isoformat()
+
+
+def test_wan_evidence_overrides_gateway_failure_and_is_recorded():
+    machine = OutageStateMachine(failures_to_open=1, successes_to_close=2, wan_interval_seconds=30)
+    machine.record_wan(WanStatus("Connected", "ERROR_NONE", 1547273, "198.51.100.5"), BASE)
+    events = machine.record(observation("icmp", "gateway", False, 9))
+    machine.record_wan(
+        WanStatus("Disconnected", "ERROR_ISP_DISCONNECTED", 1547273, None),
+        BASE + timedelta(seconds=10),
+    )
+    machine.record(observation("icmp", "1.1.1.1", False, 10))
+
+    start = next(event for event in events if event.kind == "outage_start")
+    assert machine.status().verdict == "wan_isp_outage"
+    assert start.details["classification"] == "local_problem"
+    assert start.details["wan_evidence"]["state"] == "available_no_positive_evidence"
+    evidence = machine._wan_evidence(BASE + timedelta(seconds=10), BASE + timedelta(seconds=9))
+    assert evidence["state"] == "positive"
+    assert "connection_status" in evidence["used"][0]["reasons"]
+    assert "last_connection_error" in evidence["used"][0]["reasons"]
+
+
+def test_stale_wan_signal_is_explicit_and_never_claims_healthy():
+    machine = OutageStateMachine(failures_to_open=1, successes_to_close=1, wan_interval_seconds=30)
+    machine.record_wan(WanStatus("Connected", "ERROR_NONE", 1547273, "198.51.100.5"), BASE)
+    events = machine.record(observation("icmp", "gateway", False, 61))
+
+    start = events[0]
+    assert start.details["classification"] == "local_problem"
+    assert start.details["wan_evidence"]["state"] == "stale"
+
+
+def test_absent_wan_signal_is_explicit_and_connected_uptime_does_not_suppress_outage():
+    machine = OutageStateMachine(failures_to_open=1, successes_to_close=1, wan_interval_seconds=30)
+    machine.record_wan(WanStatus("Connected", "ERROR_NONE", 1547273, "198.51.100.5"), BASE)
+    events = machine.record(observation("icmp", "gateway", False, 1))
+
+    assert events[0].details["classification"] == "local_problem"
+    assert events[0].details["wan_evidence"]["state"] == "available_no_positive_evidence"
+
+    machine = OutageStateMachine(failures_to_open=1, successes_to_close=1, wan_interval_seconds=30)
+    events = machine.record(observation("icmp", "gateway", False, 1))
+    assert events[0].details["wan_evidence"]["state"] == "absent"
+
+
+def test_trace_target_prefers_failing_external_target():
+    machine = OutageStateMachine(failures_to_open=1, successes_to_close=1)
+    machine.record(
+        HealthObservation("gateway", "icmp", False, BASE, {"resolved_target": "192.168.4.1"})
+    )
+    machine.record(observation("icmp", "1.1.1.1", False, 1))
+
+    assert machine._trace_target() == "1.1.1.1"
+    assert machine._trace_target() != "192.168.4.1"
+
+
+def test_classification_history_is_retained_for_start_event():
+    machine = OutageStateMachine(failures_to_open=1, successes_to_close=2)
+    start = machine.record(observation("icmp", "gateway", False, 0))[0]
+    machine.record(observation("icmp", "gateway", True, 1))
+    machine.record(observation("icmp", "1.1.1.1", False, 2))
+    machine.record(observation("icmp", "gateway", True, 3))
+    machine.record(observation("icmp", "1.1.1.1", True, 4))
+    machine.record(observation("icmp", "1.1.1.1", True, 5))
+
+    assert start.details["classification_history"] == [
+        {"classification": "local_problem", "at": BASE.isoformat()}
+    ]
+    assert machine.status().open is False
+
+
+async def test_coordinator_reconciles_start_classification_at_recovery(frozen_clock):
+    events = []
+    updates = []
+    coordinator = OutageCoordinator(
+        OutageStateMachine(failures_to_open=1, successes_to_close=2),
+        frozen_clock,
+        lambda event: events.append(event) or len(events),
+        OutageConfig(
+            failures_to_open=1,
+            successes_to_close=2,
+            traceroute_on_open=False,
+        ),
+        event_update=lambda event_id, details: updates.append((event_id, details)),
+    )
+
+    await coordinator.observe(observation("icmp", "gateway", False, 0))
+    await coordinator.observe(observation("icmp", "1.1.1.1", False, 1))
+    await coordinator.observe(observation("icmp", "gateway", True, 2))
+    await coordinator.observe(observation("icmp", "gateway", True, 3))
+    await coordinator.observe(observation("icmp", "1.1.1.1", True, 4))
+    await coordinator.observe(observation("icmp", "1.1.1.1", True, 5))
+
+    assert events[-1].kind == "outage_end"
+    assert events[-1].ts == BASE + timedelta(seconds=4)
+    assert events[-1].details["duration_seconds"] == 4
+    assert updates[-1][0] == 1
+    assert updates[-1][1]["classification"] == "partial_path"
+    assert [item["classification"] for item in updates[-1][1]["classification_history"]] == [
+        "local_problem",
+        "wan_isp_outage",
+        "partial_path",
+    ]
+
+
+async def test_coordinator_records_positive_wan_evidence_on_start_event(frozen_clock):
+    events = []
+    updates = []
+    coordinator = OutageCoordinator(
+        OutageStateMachine(failures_to_open=1, successes_to_close=2, wan_interval_seconds=30),
+        frozen_clock,
+        lambda event: events.append(event) or len(events),
+        OutageConfig(failures_to_open=1, successes_to_close=2, traceroute_on_open=False),
+        event_update=lambda event_id, details: updates.append((event_id, details)),
+    )
+
+    await coordinator.observe(observation("icmp", "gateway", False, 0))
+    await coordinator.wan(WanStatus("Disconnected", "ERROR_ISP_DISCONNECTED", 1, None))
+
+    assert events[0].details["classification"] == "local_problem"
+    assert updates[-1][0] == 1
+    assert updates[-1][1]["classification"] == "wan_isp_outage"
+    assert updates[-1][1]["wan_evidence"]["state"] == "positive"
 
 
 def test_coordinator_attaches_background_traceroute(frozen_clock):

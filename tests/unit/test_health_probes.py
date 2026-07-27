@@ -33,6 +33,19 @@ def test_traceroute_fixtures(fixture_dir: Path):
     assert posix[2].rtts_ms == (12.5, 13.1, 12.8)
 
 
+def test_windows_traceroute_distinguishes_unreachable_from_timeout(fixture_dir: Path):
+    hops = parse_traceroute((fixture_dir / "tracert_windows_unreachable.txt").read_text())
+
+    assert hops[0].ip is None
+    assert hops[0].host is None
+    assert hops[0].unreachable_reported_by == "192.168.4.143"
+    assert not hops[0].timed_out
+    assert hops[1].unreachable_reported_by == "192.168.4.143"
+    assert not hops[1].timed_out
+    assert hops[2].timed_out
+    assert hops[2].unreachable_reported_by is None
+
+
 @pytest.mark.asyncio
 async def test_http_probe_distinguishes_status_and_timing(monkeypatch, frozen_clock):
     class Response:

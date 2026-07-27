@@ -16,6 +16,7 @@ class TracerouteHop:
     ip: str | None
     rtts_ms: tuple[float, ...]
     timed_out: bool
+    unreachable_reported_by: str | None = None
 
 
 class TracerouteProbe(Protocol):
@@ -27,6 +28,7 @@ class TracerouteProbe(Protocol):
 _IP = re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b")
 _RTT = re.compile(r"(?:<\s*)?(\d+(?:\.\d+)?)\s*ms", re.IGNORECASE)
 _HOP = re.compile(r"^\s*(\d+)\s+(.*)$")
+_UNREACHABLE = re.compile(r"Destination\s+(?:host|net)\s+unreachable", re.IGNORECASE)
 
 
 def parse_traceroute(output: str) -> list[TracerouteHop]:
@@ -37,12 +39,28 @@ def parse_traceroute(output: str) -> list[TracerouteHop]:
             continue
         index = int(match.group(1))
         body = match.group(2)
+        unreachable = _UNREACHABLE.search(body)
+        if unreachable is not None:
+            reporter = _IP.search(body)
+            hops.append(
+                TracerouteHop(
+                    index=index,
+                    host=None,
+                    ip=None,
+                    rtts_ms=(),
+                    timed_out=False,
+                    unreachable_reported_by=reporter.group(0) if reporter else None,
+                )
+            )
+            continue
         rtts = tuple(float(value) for value in _RTT.findall(body))
         ip_match = _IP.search(body)
         ip = ip_match.group(0) if ip_match else None
         timed_out = not rtts or "*" in body or "timed out" in body.lower()
         host: str | None = None
-        if ip_match is not None:
+        if timed_out and not rtts:
+            host = None
+        elif ip_match is not None:
             for token in body[: ip_match.start()].split():
                 candidate = token.strip("()[]")
                 if (
@@ -56,7 +74,9 @@ def parse_traceroute(output: str) -> list[TracerouteHop]:
                 host = after_ip.split()[0].strip("()[]") or None
         else:
             tokens = [
-                token for token in body.split() if token not in {"*", "Request", "timed", "out"}
+                token
+                for token in body.split()
+                if token not in {"*", "Request", "timed", "out", "out."}
             ]
             host = tokens[0] if tokens else None
         hops.append(TracerouteHop(index, host, ip, rtts, timed_out))

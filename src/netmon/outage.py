@@ -90,10 +90,22 @@ class AggregateStatus:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class _WanObservation:
+    status: WanStatus
+    ts: datetime
+    positive_reasons: tuple[str, ...]
+
+
 class OutageStateMachine:
     """Hysteresis per target, followed by a conservative aggregate verdict."""
 
-    def __init__(self, failures_to_open: int = 3, successes_to_close: int = 2) -> None:
+    def __init__(
+        self,
+        failures_to_open: int = 3,
+        successes_to_close: int = 2,
+        wan_interval_seconds: float | None = None,
+    ) -> None:
         self.failures_to_open = failures_to_open
         self.successes_to_close = successes_to_close
         self._states: dict[str, TargetState] = {}
@@ -102,28 +114,54 @@ class OutageStateMachine:
         self._aggregate_since: datetime | None = None
         self._aggregate_verdict = "unknown"
         self._wan: WanStatus | None = None
+        self._wan_observed_at: datetime | None = None
+        self._wan_history: list[_WanObservation] = []
+        self._wan_stale_after_seconds = (
+            2 * wan_interval_seconds if wan_interval_seconds is not None else None
+        )
         self._wan_reconnect_at: datetime | None = None
         self._wan_reconnect_error: str | None = None
+        self._aggregate_targets: set[str] = set()
+        self._recovery_started_at: dict[str, datetime] = {}
+        self._aggregate_recovery_started_at: datetime | None = None
+        self._classification_history: list[dict[str, str]] = []
+        self._last_observation_at: datetime | None = None
 
     def record(self, observation: HealthObservation) -> list[Event]:
         key = f"{observation.protocol}:{observation.target}"
         state = self._states.setdefault(key, TargetState(observation.protocol, observation.target))
         self._latest[key] = observation
+        self._last_observation_at = observation.ts
         if observation.success is True:
             state.last_success = True
+            if self._aggregate_open:
+                self._recovery_started_at.setdefault(key, observation.ts)
             advance_hysteresis(
                 state, False, observation.ts, self.failures_to_open, self.successes_to_close
             )
         elif observation.success is False:
             state.last_success = False
+            self._recovery_started_at.pop(key, None)
             advance_hysteresis(
                 state, True, observation.ts, self.failures_to_open, self.successes_to_close
             )
+        if self._aggregate_open and state.open:
+            self._aggregate_targets.add(key)
+        if self._aggregate_open and self._aggregate_targets:
+            recovery_times = [
+                self._recovery_started_at[key]
+                for key in self._aggregate_targets
+                if key in self._recovery_started_at
+            ]
+            if len(recovery_times) == len(self._aggregate_targets):
+                self._aggregate_recovery_started_at = max(recovery_times)
         return self._aggregate_events(observation.ts)
 
     def record_wan(self, status: WanStatus, ts: datetime) -> list[Event]:
         events: list[Event] = []
+        positive_reasons: list[str] = []
         if self._wan is not None and status.uptime_seconds < self._wan.uptime_seconds:
+            positive_reasons.append("wan_reconnect")
             self._wan_reconnect_at = ts
             self._wan_reconnect_error = status.last_connection_error
             events.append(
@@ -139,7 +177,15 @@ class OutageStateMachine:
                     },
                 )
             )
+        if status.connection_status != "Connected":
+            positive_reasons.append("connection_status")
+        if status.last_connection_error != "ERROR_NONE":
+            positive_reasons.append("last_connection_error")
         self._wan = status
+        self._wan_observed_at = ts
+        self._wan_history.append(_WanObservation(status, ts, tuple(positive_reasons)))
+        self._last_observation_at = ts
+        events.extend(self._aggregate_events(ts))
         return events
 
     def status(self, now: datetime | None = None) -> AggregateStatus:
@@ -178,13 +224,17 @@ class OutageStateMachine:
         )
 
     def _aggregate_events(self, ts: datetime) -> list[Event]:
-        verdict = self._classify()
+        verdict = self._classify(ts)
         events: list[Event] = []
         if not self._aggregate_open and verdict not in {"healthy", "unknown"}:
             open_states = [state for state in self._states.values() if state.open]
             since = min((state.opened_at for state in open_states if state.opened_at), default=ts)
             self._aggregate_open = True
             self._aggregate_since = since
+            self._aggregate_targets = {f"{state.protocol}:{state.target}" for state in open_states}
+            self._aggregate_recovery_started_at = None
+            self._classification_history = []
+            self._record_classification(verdict, ts)
             events.append(
                 Event(
                     ts=since,
@@ -195,34 +245,60 @@ class OutageStateMachine:
                         "classification": verdict,
                         "target": self._trace_target(),
                         "detected_at": ts.isoformat(),
+                        "classification_history": list(self._classification_history),
+                        "wan_evidence": self._wan_evidence(ts, since),
                     },
                 )
             )
         elif self._aggregate_open and verdict in {"healthy", "unknown"}:
             since = self._aggregate_since or ts
+            final_verdict = self._aggregate_verdict
             events.append(
                 Event(
-                    ts=ts,
+                    ts=self._aggregate_recovery_started_at or ts,
                     kind="outage_end",
                     severity="info",
                     message="Connection health recovered",
                     details={
-                        "classification": self._aggregate_verdict,
+                        "classification": final_verdict,
                         "started_at": since.isoformat(),
-                        "duration_seconds": max(0.0, (ts - since).total_seconds()),
+                        "duration_seconds": max(
+                            0.0,
+                            ((self._aggregate_recovery_started_at or ts) - since).total_seconds(),
+                        ),
+                        "classification_history": list(self._classification_history),
+                        "wan_evidence": self._wan_evidence(ts, since),
                     },
                 )
             )
             self._aggregate_open = False
             self._aggregate_since = None
+            self._aggregate_targets = set()
+            self._aggregate_recovery_started_at = None
+            self._classification_history = []
+        elif self._aggregate_open:
+            self._record_classification(verdict, ts)
         self._aggregate_verdict = verdict
         return events
 
-    def _classify(self) -> str:
+    def _record_classification(self, verdict: str, ts: datetime) -> None:
+        if (
+            not self._classification_history
+            or self._classification_history[-1]["classification"] != verdict
+        ):
+            self._classification_history.append({"classification": verdict, "at": ts.isoformat()})
+
+    def _classify(self, ts: datetime) -> str:
         gateway = self._state_for("icmp", "gateway")
         open_states = [state for state in self._states.values() if state.open]
         if not open_states:
             return "healthy" if self._latest else "unknown"
+        outage_since = self._aggregate_since or min(
+            (state.opened_at for state in open_states if state.opened_at), default=ts
+        )
+        wan_evidence = self._wan_evidence(ts, outage_since)
+        if wan_evidence["state"] == "positive":
+            return "wan_isp_outage"
         if gateway is not None and gateway.open:
             return "local_problem"
 
@@ -257,6 +333,50 @@ class OutageStateMachine:
             return "partial_path"
         return "partial_path"
 
+    def _wan_evidence(self, now: datetime, outage_since: datetime | None) -> dict[str, Any]:
+        if self._wan is None or self._wan_observed_at is None:
+            return {"state": "absent", "used": []}
+        observed_at = self._wan_observed_at
+        stale_after = self._wan_stale_after_seconds
+        age = max(0.0, (now - observed_at).total_seconds())
+        if stale_after is not None and age > stale_after:
+            return {
+                "state": "stale",
+                "observed_at": observed_at.isoformat(),
+                "age_seconds": age,
+                "stale_after_seconds": stale_after,
+                "used": [],
+            }
+        used = [
+            {
+                "observed_at": item.ts.isoformat(),
+                "reasons": list(item.positive_reasons),
+                "connection_status": item.status.connection_status,
+                "last_connection_error": item.status.last_connection_error,
+            }
+            for item in self._wan_history
+            if item.positive_reasons
+            and (outage_since is None or item.ts >= outage_since)
+            and item.ts <= now
+        ]
+        return {
+            "state": "positive" if used else "available_no_positive_evidence",
+            "observed_at": observed_at.isoformat(),
+            "age_seconds": age,
+            "stale_after_seconds": stale_after,
+            "used": used,
+        }
+
+    def active_outage_details(self) -> dict[str, Any] | None:
+        if not self._aggregate_open or self._aggregate_since is None:
+            return None
+        now = self._last_observation_at or self._aggregate_since
+        return {
+            "classification": self._aggregate_verdict,
+            "classification_history": list(self._classification_history),
+            "wan_evidence": self._wan_evidence(now, self._aggregate_since),
+        }
+
     def _icmp_resolver_ok(self, dns_observation: HealthObservation) -> bool:
         resolver = str(dns_observation.details.get("resolver", ""))
         observation = self._latest.get(f"icmp:{resolver}")
@@ -266,14 +386,20 @@ class OutageStateMachine:
         return self._states.get(f"{protocol}:{target}")
 
     def _trace_target(self) -> str:
-        gateway = self._state_for("icmp", "gateway")
-        if gateway is not None and gateway.open:
-            observation = self._latest.get("icmp:gateway")
-            if observation is not None:
-                return str(observation.details.get("resolved_target", gateway.target))
-            return gateway.target
+        gateway_observation = self._latest.get("icmp:gateway")
+        resolved_gateway = (
+            str(gateway_observation.details.get("resolved_target"))
+            if gateway_observation is not None
+            and gateway_observation.details.get("resolved_target") is not None
+            else None
+        )
         for state in self._states.values():
-            if state.open and state.protocol in {"icmp", "http"}:
+            if (
+                state.open
+                and state.protocol in {"icmp", "http"}
+                and state.target != "gateway"
+                and state.target != resolved_gateway
+            ):
                 return state.target
         return "1.1.1.1"
 
@@ -301,6 +427,8 @@ class OutageCoordinator:
         self.traceroute = traceroute
         self.event_update = event_update
         self._trace_tasks: set[asyncio.Task[None]] = set()
+        self._event_details: dict[int, dict[str, Any]] = {}
+        self._open_event_id: int | None = None
 
     async def observe(self, observation: HealthObservation) -> None:
         await self._emit(self.machine.record(observation))
@@ -314,15 +442,32 @@ class OutageCoordinator:
     async def _emit(self, events: list[Event]) -> None:
         for event in events:
             event_id = await _maybe_await(self.event_sink(event))
-            if (
-                event.kind == "outage_start"
-                and self.config.traceroute_on_open
-                and self.traceroute is not None
-                and self.event_update is not None
-            ):
-                task = asyncio.create_task(self._capture(event_id, event))
-                self._trace_tasks.add(task)
-                task.add_done_callback(self._trace_tasks.discard)
+            if event.kind == "outage_start":
+                self._open_event_id = event_id
+                self._event_details[event_id] = dict(event.details)
+                if (
+                    self.config.traceroute_on_open
+                    and self.traceroute is not None
+                    and self.event_update is not None
+                ):
+                    task = asyncio.create_task(self._capture(event_id, event))
+                    self._trace_tasks.add(task)
+                    task.add_done_callback(self._trace_tasks.discard)
+            elif event.kind == "outage_end":
+                if self._open_event_id is not None and self.event_update is not None:
+                    details = self._event_details[self._open_event_id]
+                    details.update(_outage_verdict_details(event.details))
+                    await _maybe_await(self.event_update(self._open_event_id, details))
+                self._open_event_id = None
+
+        if self._open_event_id is not None and self.event_update is not None:
+            active_details = self.machine.active_outage_details()
+            if active_details is not None:
+                details = self._event_details[self._open_event_id]
+                changed = any(details.get(key) != value for key, value in active_details.items())
+                if changed:
+                    details.update(active_details)
+                    await _maybe_await(self.event_update(self._open_event_id, details))
 
     async def _capture(self, event_id: int, event: Event) -> None:
         target = str(event.details.get("target", "1.1.1.1"))
@@ -336,10 +481,19 @@ class OutageCoordinator:
             )
         except Exception:
             hops = []
-        details = dict(event.details)
+        details = dict(self._event_details.get(event_id, event.details))
         details["traceroute"] = [asdict(hop) for hop in hops]
+        self._event_details[event_id] = details
         assert self.event_update is not None
         await _maybe_await(self.event_update(event_id, details))
+
+
+def _outage_verdict_details(details: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: details[key]
+        for key in ("classification", "classification_history", "wan_evidence")
+        if key in details
+    }
 
 
 async def _maybe_await(value: Any) -> Any:

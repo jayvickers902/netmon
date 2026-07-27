@@ -29,6 +29,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Outage classification now uses only fresh positive WAN corroboration, traces toward a
+  failing external target, distinguishes Windows traceroute unreachable reports from timeouts,
+  and backdates recovery events to the first success in the closing streak. Outage start details
+  are reconciled with the final classification and retain classification history.
 - The database lock's liveness check sent a Ctrl-C to netmon's own console. It used
   `os.kill(pid, 0)`, the POSIX idiom for "does this process exist" — but on Windows signal 0
   *is* `CTRL_C_EVENT`, so `os.kill` takes the `GenerateConsoleCtrlEvent` branch and delivers a
