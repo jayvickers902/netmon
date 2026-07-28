@@ -28,17 +28,17 @@ class HttpxProbe:
     def __init__(self, clock: Clock | None = None, timeout_seconds: float = 5.0) -> None:
         self.clock = clock or RealClock()
         self.timeout_seconds = timeout_seconds
+        self._client: httpx.AsyncClient | None = None
 
     async def fetch(self, url: str) -> HttpResult:
         started = self.clock.monotonic()
         try:
             timeout = httpx.Timeout(self.timeout_seconds)
-            async with (
-                httpx.AsyncClient(
+            if self._client is None:
+                self._client = httpx.AsyncClient(
                     timeout=timeout, follow_redirects=True, trust_env=False
-                ) as client,
-                client.stream("GET", url) as response,
-            ):
+                )
+            async with self._client.stream("GET", url) as response:
                 ttfb = (self.clock.monotonic() - started) * 1000
                 await response.aread()
                 total = (self.clock.monotonic() - started) * 1000
@@ -58,6 +58,11 @@ class HttpxProbe:
             return HttpResult(url, "connect_failure", None, None, None)
         except ValueError:
             return HttpResult(url, "invalid_url", None, None, None)
+
+    async def close(self) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
 
 
 def _causes(error: BaseException) -> list[BaseException]:

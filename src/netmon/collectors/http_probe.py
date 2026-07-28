@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable
+
 from netmon.collectors.base import Clock, Collector
 from netmon.collectors.health import HealthSink
 from netmon.config import HttpConfig
@@ -53,6 +55,13 @@ class HttpCollector(Collector):
                 if callback_result is not None:
                     await callback_result
         return samples
+
+    async def close(self) -> None:
+        close = getattr(self.http, "close", None)
+        if close is not None:
+            result = close()
+            if isinstance(result, Awaitable):
+                await result
 
 
 HttpProbeCollector = HttpCollector

@@ -100,6 +100,8 @@ class _WanObservation:
 class OutageStateMachine:
     """Hysteresis per target, followed by a conservative aggregate verdict."""
 
+    _MAX_WAN_HISTORY = 1024
+
     def __init__(
         self,
         failures_to_open: int = 3,
@@ -183,7 +185,16 @@ class OutageStateMachine:
             positive_reasons.append("last_connection_error")
         self._wan = status
         self._wan_observed_at = ts
-        self._wan_history.append(_WanObservation(status, ts, tuple(positive_reasons)))
+        if positive_reasons:
+            self._wan_history.append(_WanObservation(status, ts, tuple(positive_reasons)))
+            stale_after = self._wan_stale_after_seconds
+            if stale_after is not None:
+                cutoff = ts.timestamp() - stale_after
+                self._wan_history = [
+                    item for item in self._wan_history if item.ts.timestamp() >= cutoff
+                ]
+            if len(self._wan_history) > self._MAX_WAN_HISTORY:
+                self._wan_history = self._wan_history[-self._MAX_WAN_HISTORY :]
         self._last_observation_at = ts
         events.extend(self._aggregate_events(ts))
         return events
@@ -454,10 +465,13 @@ class OutageCoordinator:
                     self._trace_tasks.add(task)
                     task.add_done_callback(self._trace_tasks.discard)
             elif event.kind == "outage_end":
-                if self._open_event_id is not None and self.event_update is not None:
-                    details = self._event_details[self._open_event_id]
-                    details.update(_outage_verdict_details(event.details))
-                    await _maybe_await(self.event_update(self._open_event_id, details))
+                event_id = self._open_event_id
+                if event_id is not None:
+                    if self.event_update is not None:
+                        details = self._event_details[event_id]
+                        details.update(_outage_verdict_details(event.details))
+                        await _maybe_await(self.event_update(event_id, details))
+                    self._event_details.pop(event_id, None)
                 self._open_event_id = None
 
         if self._open_event_id is not None and self.event_update is not None:
@@ -483,7 +497,8 @@ class OutageCoordinator:
             hops = []
         details = dict(self._event_details.get(event_id, event.details))
         details["traceroute"] = [asdict(hop) for hop in hops]
-        self._event_details[event_id] = details
+        if self._open_event_id == event_id:
+            self._event_details[event_id] = details
         assert self.event_update is not None
         await _maybe_await(self.event_update(event_id, details))
 

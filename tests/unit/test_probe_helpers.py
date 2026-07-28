@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import socket
+import subprocess
 import sys
 from types import SimpleNamespace
 
@@ -55,13 +57,32 @@ async def test_posix_arp_falls_back_to_arp_command(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_hostname_probe_uses_netbios_then_mdns(monkeypatch):
-    async def no_dns(*args):
+async def test_windows_hostname_probe_releases_subprocess_pipes(monkeypatch):
+    def no_dns(*args):
+        raise OSError
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(args, 0, b"DEVICE <00> UNIQUE", b"")
+
+    async def fail_async_exec(*args, **kwargs):
+        raise AssertionError("Windows hostname lookup must not allocate Proactor pipe transports")
+
+    monkeypatch.setattr(socket, "gethostbyaddr", no_dns)
+    monkeypatch.setattr("netmon.probes.hostname.sys.platform", "win32")
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fail_async_exec)
+    assert await SystemHostnameProbe().resolve("192.168.1.2") == "DEVICE"
+
+
+@pytest.mark.asyncio
+async def test_posix_hostname_probe_keeps_async_command_path(monkeypatch):
+    def no_dns(*args):
         raise OSError
 
     async def fake_exec(*args, **kwargs):
         return Process(0, b"DEVICE <00> UNIQUE")
 
-    monkeypatch.setattr(asyncio, "to_thread", no_dns)
+    monkeypatch.setattr(socket, "gethostbyaddr", no_dns)
+    monkeypatch.setattr("netmon.probes.hostname._is_windows", lambda: False)
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     assert await SystemHostnameProbe().resolve("192.168.1.2") == "DEVICE"

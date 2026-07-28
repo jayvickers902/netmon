@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import ctypes
 import ipaddress
 import sys
 from collections.abc import Mapping, Sequence
+from functools import lru_cache
 from typing import Protocol
 
 
@@ -13,6 +15,46 @@ class GatewayProbe(Protocol):
     async def default_gateway(self) -> str | None: ...
 
     async def lan_address(self, gateway: str | None = None) -> str | None: ...
+
+
+class _MibIpForwardRow(ctypes.Structure):
+    """IPv4 route returned by the Windows ``GetBestRoute`` API."""
+
+    _fields_ = tuple(
+        (name, ctypes.c_uint32)
+        for name in (
+            "destination",
+            "mask",
+            "policy",
+            "next_hop",
+            "interface_index",
+            "route_type",
+            "protocol",
+            "age",
+            "next_hop_as",
+            "metric_1",
+            "metric_2",
+            "metric_3",
+            "metric_4",
+            "metric_5",
+        )
+    )
+
+
+@lru_cache(maxsize=1)
+def _gateway_iphlpapi() -> ctypes.WinDLL:
+    library = ctypes.WinDLL("iphlpapi.dll")
+    library.GetBestRoute.argtypes = (
+        ctypes.c_uint32,
+        ctypes.c_uint32,
+        ctypes.POINTER(_MibIpForwardRow),
+    )
+    library.GetBestRoute.restype = ctypes.c_uint32
+    return library
+
+
+def _is_windows() -> bool:
+    return sys.platform == "win32"
 
 
 def parse_default_gateway(output: str) -> str | None:
@@ -38,11 +80,9 @@ def parse_default_gateway(output: str) -> str | None:
 
 class SystemGatewayProbe:
     async def default_gateway(self) -> str | None:
-        command = (
-            ("route", "print", "-4")
-            if sys.platform == "win32"
-            else ("ip", "route", "show", "default")
-        )
+        if _is_windows():
+            return self._windows_default_gateway()
+        command = ("ip", "route", "show", "default")
         try:
             process = await asyncio.create_subprocess_exec(
                 *command,
@@ -53,6 +93,21 @@ class SystemGatewayProbe:
         except OSError:
             return None
         return parse_default_gateway(stdout.decode(errors="replace"))
+
+    @staticmethod
+    def _windows_default_gateway() -> str | None:
+        route = _MibIpForwardRow()
+        # Asking how Windows routes a public address resolves the active IPv4
+        # default route while respecting interface metrics.
+        destination = int.from_bytes(ipaddress.IPv4Address("1.1.1.1").packed, "little")
+        try:
+            result = _gateway_iphlpapi().GetBestRoute(destination, 0, ctypes.byref(route))
+        except (OSError, ctypes.ArgumentError):
+            return None
+        if result != 0 or route.next_hop == 0:
+            return None
+        packed = int(route.next_hop).to_bytes(4, "little")
+        return str(ipaddress.IPv4Address(packed))
 
     async def lan_address(self, gateway: str | None = None) -> str | None:
         import psutil

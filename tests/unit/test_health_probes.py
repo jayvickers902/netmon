@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
+import ctypes
 from pathlib import Path
+from types import SimpleNamespace
 
 import dns.resolver
 import httpx
 import pytest
 
+from netmon.probes import gateway as gateway_module
+from netmon.probes import upnp as upnp_module
 from netmon.probes.dns import ResolverDnsProbe
 from netmon.probes.gateway import SystemGatewayProbe, parse_default_gateway
 from netmon.probes.http import HttpxProbe
@@ -21,6 +26,31 @@ def test_default_gateway_parser_and_interface_selection():
         "eth0": [type("Addr", (), {"address": "192.168.4.143", "netmask": "255.255.255.0"})()]
     }
     assert SystemGatewayProbe._address_for_gateway("192.168.4.1", addresses) == "192.168.4.143"
+
+
+@pytest.mark.asyncio
+async def test_windows_gateway_lookup_uses_native_api_without_subprocess(monkeypatch):
+    calls = []
+
+    class Function:
+        def __call__(self, destination, source, row_pointer):
+            calls.append((destination, source))
+            row = ctypes.cast(row_pointer, ctypes.POINTER(gateway_module._MibIpForwardRow)).contents
+            row.next_hop = int.from_bytes(b"\xc0\xa8\x04\x01", "little")
+            return 0
+
+    library = SimpleNamespace(GetBestRoute=Function())
+
+    async def unexpected_subprocess(*args, **kwargs):
+        del args, kwargs
+        raise AssertionError("Windows gateway lookup must not create a subprocess")
+
+    monkeypatch.setattr(gateway_module.sys, "platform", "win32")
+    monkeypatch.setattr(gateway_module, "_gateway_iphlpapi", lambda: library)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", unexpected_subprocess)
+
+    assert await SystemGatewayProbe().default_gateway() == "192.168.4.1"
+    assert len(calls) == 1
 
 
 def test_traceroute_fixtures(fixture_dir: Path):
@@ -76,6 +106,45 @@ async def test_http_probe_distinguishes_status_and_timing(monkeypatch, frozen_cl
     assert result.status == "ok"
     assert result.ttfb_ms == 0
     assert result.total_ms == 10
+
+
+@pytest.mark.asyncio
+async def test_http_probe_reuses_and_closes_client(monkeypatch, frozen_clock):
+    clients = []
+
+    class Response:
+        status_code = 204
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def aread(self):
+            return None
+
+    class Client:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.closed = False
+            clients.append(self)
+
+        def stream(self, method, url):
+            del method, url
+            return Response()
+
+        async def aclose(self):
+            self.closed = True
+
+    monkeypatch.setattr(httpx, "AsyncClient", Client)
+    probe = HttpxProbe(frozen_clock)
+    await probe.fetch("https://example.com")
+    await probe.fetch("https://example.com")
+    await probe.close()
+
+    assert len(clients) == 1
+    assert clients[0].closed
 
 
 @pytest.mark.asyncio
@@ -158,7 +227,9 @@ def test_upnp_description_locates_wan_control_url(fixture_dir: Path):
 
 
 @pytest.mark.asyncio
-async def test_upnp_reads_only_wan_connection_status(fixture_dir: Path):
+@pytest.mark.parametrize("windows", [False, True])
+async def test_upnp_reads_only_wan_connection_status(fixture_dir: Path, monkeypatch, windows):
+    monkeypatch.setattr(upnp_module, "_is_windows", lambda: windows)
     description = (fixture_dir / "upnp_description.xml").read_bytes()
     status_xml = (
         b"<s:Envelope xmlns:s='http://schemas.xmlsoap.org/soap/envelope/'>"
@@ -186,7 +257,15 @@ async def test_upnp_reads_only_wan_connection_status(fixture_dir: Path):
 
     probe = UpnpProbe(transport=httpx.MockTransport(handler))
     result = await probe._read_status("http://192.168.4.1:1900/igd.xml")
+    client = probe._sync_client if windows else probe._client
+    repeated = await probe._read_status("http://192.168.4.1:1900/igd.xml")
+    assert (probe._sync_client if windows else probe._client) is client
+    await probe.close()
+    assert client is not None and client.is_closed
+    assert probe._client is None
+    assert probe._sync_client is None
     assert result == WanStatus("Connected", "ERROR_NONE", 42, "198.51.100.8")
+    assert repeated == result
 
 
 def test_upnp_discovery_pins_lan_interface(monkeypatch):

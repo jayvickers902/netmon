@@ -96,6 +96,13 @@ class WanStatusCollector(Collector):
         self.previous = status
         return samples
 
+    async def close(self) -> None:
+        close = getattr(self.upnp, "close", None)
+        if close is not None:
+            result = close()
+            if isinstance(result, Awaitable):
+                await result
+
 
 async def _maybe_await(value: int | Awaitable[int]) -> int:
     if isinstance(value, Awaitable):

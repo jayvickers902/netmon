@@ -47,11 +47,13 @@ def parse_get_ip_net_table(data: bytes) -> list[ArpEntry]:
         physical_length = int.from_bytes(data[offset + 4 : offset + 8], "little")
         physical = data[offset + 8 : offset + 16][:physical_length]
         raw_ip = data[offset + 16 : offset + 20]
-        if physical_length >= 6:
+        row_type = int.from_bytes(data[offset + 20 : offset + 24], "little")
+        mac = physical[:6]
+        if row_type in (3, 4) and physical_length >= 6 and any(mac) and not mac[0] & 1:
             entries.append(
                 ArpEntry(
                     str(ipaddress.IPv4Address(raw_ip)),
-                    normalize_mac(physical[:6].hex()),
+                    normalize_mac(mac.hex()),
                 )
             )
     return entries
@@ -160,7 +162,11 @@ class SystemInterfaceProbe:
                     network = ipaddress.ip_network(f"{ip}/{netmask}", strict=False)
                 except ValueError:
                     continue
-                if isinstance(network, ipaddress.IPv4Network) and not network.is_loopback:
+                if (
+                    isinstance(network, ipaddress.IPv4Network)
+                    and not network.is_loopback
+                    and not network.is_link_local
+                ):
                     result.add(network)
         return sorted(result, key=lambda network: (int(network.network_address), network.prefixlen))
 

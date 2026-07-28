@@ -61,6 +61,7 @@ class Scheduler:
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        await asyncio.gather(*(collector.close() for collector in self.collectors))
 
     def health(self) -> dict[str, dict[str, object | None]]:
         return {

@@ -13,8 +13,14 @@ class GoodCollector(Collector):
     name = "good"
     interval = 0.001
 
+    def __init__(self) -> None:
+        self.closed = False
+
     async def collect(self) -> list[Sample]:
         return []
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class BadCollector(Collector):
@@ -35,9 +41,11 @@ async def test_frozen_clock_sleep_advances_datetime(frozen_clock: FrozenClock):
 
 @pytest.mark.asyncio
 async def test_scheduler_isolates_failures_and_reports_health():
-    scheduler = Scheduler([GoodCollector(), BadCollector()], startup_jitter=0, max_backoff=0.01)
+    good = GoodCollector()
+    scheduler = Scheduler([good, BadCollector()], startup_jitter=0, max_backoff=0.01)
     await scheduler.start()
     await asyncio.sleep(0.02)
     await scheduler.stop()
+    assert good.closed
     assert scheduler.health()["good"]["last_success"] is not None
     assert scheduler.health()["bad"]["last_error"] == "boom"

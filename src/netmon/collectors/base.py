@@ -59,3 +59,7 @@ class Collector(ABC):
 
     @abstractmethod
     async def collect(self) -> list[Sample]: ...
+
+    async def close(self) -> None:
+        """Release resources owned by the collector's probes."""
+        return None

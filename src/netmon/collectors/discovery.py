@@ -6,6 +6,7 @@ import asyncio
 import ipaddress
 from collections.abc import Awaitable, Callable
 from datetime import datetime
+from itertools import islice
 
 from netmon.collectors.base import Clock, Collector
 from netmon.config import DiscoveryConfig
@@ -49,14 +50,14 @@ class DiscoveryCollector(Collector):
 
     async def collect(self) -> list[Sample]:
         subnets = await self._subnets()
-        hosts = [host for subnet in subnets for host in subnet.hosts()]
-        semaphore = asyncio.Semaphore(self.config.concurrency)
 
         async def ping(host: ipaddress.IPv4Address) -> None:
-            async with semaphore:
-                await self.icmp.ping(str(host), 1000)
+            await self.icmp.ping(str(host), 1000)
 
-        await asyncio.gather(*(ping(host) for host in hosts))
+        for subnet in subnets:
+            hosts = iter(subnet.hosts())
+            while batch := list(islice(hosts, self.config.concurrency)):
+                await asyncio.gather(*(ping(host) for host in batch))
         arp_entries = await self.arp.entries()
         subnet_set = tuple(subnets)
         by_ip = {entry.ip: entry for entry in arp_entries if self._in_subnets(entry.ip, subnet_set)}
