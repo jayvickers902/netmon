@@ -310,10 +310,14 @@ class Store:
             where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
             parameters.append(limit)
             rows = connection.execute(
-                "SELECT metric.kind, metric.target, metric.unit, metric.source, "
-                "sample.ts, sample.value "
+                "SELECT recent.kind, recent.target, recent.unit, recent.source, "
+                "recent.ts, recent.value FROM ("
+                "SELECT metric.kind AS kind, metric.target AS target, metric.unit AS unit, "
+                "metric.source AS source, sample.ts AS ts, sample.value AS value, "
+                "sample.id AS sample_id "
                 "FROM sample JOIN metric ON metric.id=sample.metric_id "
-                f"{where} ORDER BY sample.ts ASC LIMIT ?",
+                f"{where} ORDER BY sample.ts DESC, sample.id DESC LIMIT ?"
+                ") AS recent ORDER BY recent.ts ASC, recent.sample_id ASC",
                 parameters,
             ).fetchall()
             return [

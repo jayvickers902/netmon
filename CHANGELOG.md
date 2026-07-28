@@ -46,6 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Metric queries now apply `limit` to the newest matching samples before restoring chronological
+  order, so long-running dashboards receive current state instead of the database's oldest rows.
 - eero's real `{meta, data}` response envelopes are now validated, authentication and schema
   failures are sanitized, cross-origin resource URLs are rejected before credentials are sent,
   device MACs are normalized to discovery identities, and malformed, negative, or non-finite

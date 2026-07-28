@@ -52,6 +52,35 @@ def test_health_events_metrics_and_filters(tmp_path):
     assert store.list_metrics(kind="latency_rtt_ms", target="1.1.1.1")[0]["value"] == 12.0
 
 
+def test_metric_limit_returns_newest_window_in_chronological_order(tmp_path):
+    store = Store(tmp_path / "metrics.db")
+    first = datetime(2026, 1, 1, tzinfo=UTC)
+    store.persist_samples(
+        [
+            Sample("x", "target", "count", first + timedelta(seconds=index), float(index))
+            for index in range(5)
+        ]
+    )
+
+    assert [row["value"] for row in store.list_metrics(limit=3)] == [2.0, 3.0, 4.0]
+
+
+def test_metric_limit_is_applied_after_filters(tmp_path):
+    store = Store(tmp_path / "filtered-metrics.db")
+    first = datetime(2026, 1, 1, tzinfo=UTC)
+    store.persist_samples(
+        [
+            Sample("x", "wanted", "count", first, 1.0, "remote"),
+            Sample("x", "other", "count", first + timedelta(seconds=1), 2.0, "remote"),
+            Sample("x", "wanted", "count", first + timedelta(seconds=2), 3.0, "remote"),
+            Sample("x", "wanted", "count", first + timedelta(seconds=3), 4.0, "remote"),
+        ]
+    )
+
+    rows = store.list_metrics(kind="x", target="wanted", source="remote", limit=2)
+    assert [row["value"] for row in rows] == [3.0, 4.0]
+
+
 def test_forward_migration_adds_metric_source_without_losing_samples(tmp_path):
     path = tmp_path / "old.db"
     connection = sqlite3.connect(path)
