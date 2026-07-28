@@ -112,7 +112,7 @@ change and no restart**.
 class InvestigationState:
     def __init__(self, clock: Clock) -> None: ...
     @property
-    def active(self) -> bool: ...          # started and not yet expired
+    def active(self) -> bool: ...  # started and not yet expired
     def start(self, investigation_id: int, duration_seconds: float) -> None: ...
     def stop(self) -> None: ...
     def snapshot(self) -> InvestigationWindow | None: ...
@@ -236,11 +236,11 @@ sample at all.** The report must carry:
 
 ```python
 coverage = {
-  "eero_available": bool,
-  "managed_hosts_available": list[str],
-  "degraded_buckets": int,
-  "degraded_buckets_with_device_data": int,
-  "device_data_fraction": float,
+    "eero_available": bool,
+    "managed_hosts_available": list[str],
+    "degraded_buckets": int,
+    "degraded_buckets_with_device_data": int,
+    "device_data_fraction": float,
 }
 ```
 
@@ -257,10 +257,10 @@ class InvestigationReport:
     investigation_id: int
     started_at: datetime
     ended_at: datetime
-    verdict: str                      # upload_saturation|local_link|wan_upstream|healthy|inconclusive
-    confidence: str                   # high|medium|low
-    headline: str                     # one plain-English sentence
-    reasons: list[str]                # evidence bullets, each independently checkable
+    verdict: str  # upload_saturation|local_link|wan_upstream|healthy|inconclusive
+    confidence: str  # high|medium|low
+    headline: str  # one plain-English sentence
+    reasons: list[str]  # evidence bullets, each independently checkable
     caveats: list[str]
     baseline_rtt_ms: float | None
     degraded_rtt_p95_ms: float | None

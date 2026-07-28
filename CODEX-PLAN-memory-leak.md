@@ -88,9 +88,9 @@ consume unbounded memory over weeks, and both should be fixed.
 ### 2.1 `OutageStateMachine._wan_history` — `outage.py:118`
 
 ```python
-self._wan_history: list[_WanObservation] = []          # line 118
+self._wan_history: list[_WanObservation] = []  # line 118
 ...
-self._wan_history.append(_WanObservation(status, ts, tuple(positive_reasons)))   # line 186
+self._wan_history.append(_WanObservation(status, ts, tuple(positive_reasons)))  # line 186
 ```
 
 **Appended on every WAN observation. Never popped, trimmed, or bounded.** The only reader is
