@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from starlette.middleware.base import RequestResponseEndpoint
 
 from netmon.alerts.notifiers import (
@@ -50,6 +51,20 @@ from netmon.probes.traceroute import SystemTracerouteProbe
 from netmon.probes.upnp import UpnpProbe
 from netmon.probes.webhook import HttpxWebhookProbe
 from netmon.scheduler import Scheduler
+
+
+class DeviceLabelUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    label: str | None = Field(max_length=120)
+
+    @field_validator("label")
+    @classmethod
+    def normalize_label(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
 
 def _default_scheduler(settings: NetmonSettings, store: Store, clock: Clock) -> Scheduler:
@@ -196,6 +211,13 @@ def create_app(
             raise HTTPException(status_code=404, detail="Device not found")
         return result
 
+    @app.patch("/devices/{device_id}")
+    async def update_device_label(device_id: int, update: DeviceLabelUpdate) -> dict[str, Any]:
+        result = application_store.set_device_label(device_id, update.label)
+        if result is None:
+            raise HTTPException(status_code=404, detail="Device not found")
+        return result
+
     @app.get("/events")
     async def events(
         limit: int = Query(default=100, ge=1, le=1000),
@@ -237,13 +259,77 @@ def create_app(
     async def status() -> dict[str, object]:
         return application_scheduler.current_status()
 
-    dashboard_path = Path(__file__).parents[1] / "web" / "index.html"
+    web_path = Path(__file__).parents[1] / "web"
+    dashboard_path = web_path / "index.html"
 
     @app.get("/", response_class=HTMLResponse)
+    @app.get("/timeline", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/devices-view", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/diagnostics", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/bandwidth", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/alerts-view", response_class=HTMLResponse, include_in_schema=False)
+    @app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
     async def dashboard() -> str:
-        return dashboard_path.read_text(encoding="utf-8")
+        config = _dashboard_config(application_settings)
+        return dashboard_path.read_text(encoding="utf-8").replace(
+            "__NETMON_CONFIG__", _json_for_script(config)
+        )
+
+    @app.get("/assets/dashboard.css", include_in_schema=False)
+    async def dashboard_css() -> FileResponse:
+        return FileResponse(web_path / "dashboard.css", media_type="text/css")
+
+    @app.get("/assets/dashboard.js", include_in_schema=False)
+    async def dashboard_js() -> FileResponse:
+        return FileResponse(web_path / "dashboard.js", media_type="text/javascript")
 
     return app
+
+
+def _dashboard_config(settings: NetmonSettings) -> dict[str, Any]:
+    """Expose the read-only, non-secret settings mirror used by the dashboard."""
+
+    return {
+        "version": "1.0.0",
+        "server": {"host": settings.server.host, "port": settings.server.port},
+        "api": {
+            "allow_loopback_unauthenticated": settings.api.allow_loopback_unauthenticated,
+            "token_configured": settings.api.token is not None,
+        },
+        "database": {"path": str(settings.database.path)},
+        "latency": settings.latency.model_dump(mode="json"),
+        "dns": settings.dns.model_dump(mode="json"),
+        "http": settings.http.model_dump(mode="json"),
+        "outage": settings.outage.model_dump(mode="json"),
+        "discovery": settings.discovery.model_dump(mode="json"),
+        "wan": settings.wan.model_dump(mode="json"),
+        "host_nic": settings.host_nic.model_dump(mode="json"),
+        "retention": settings.retention.model_dump(mode="json"),
+        "alerts": {
+            "enabled": settings.alerts.enabled,
+            "interval_seconds": settings.alerts.interval_seconds,
+            "cooldown_seconds": settings.alerts.cooldown_seconds,
+            "rules": [rule.model_dump(mode="json") for rule in settings.alerts.rules],
+            "webhook_configured": settings.alerts.webhook_url is not None,
+            "windows_toast": settings.alerts.windows_toast,
+        },
+        "speedtest": {
+            key: value
+            for key, value in settings.speedtest.model_dump(mode="json").items()
+            if key != "endpoint"
+        },
+        "eero": {
+            "enabled": settings.eero.enabled,
+            "interval_seconds": settings.eero.interval_seconds,
+            "token_configured": _read_token(settings.eero.token_path) is not None,
+        },
+    }
+
+
+def _json_for_script(value: dict[str, Any]) -> str:
+    import json
+
+    return json.dumps(value, separators=(",", ":")).replace("<", "\\u003c")
 
 
 def _loopback_request_allowed(request: Request, enabled: bool) -> bool:

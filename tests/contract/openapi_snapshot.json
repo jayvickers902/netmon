@@ -1,15 +1,37 @@
 {
   "openapi": "3.1.0",
   "title": "netmon",
-  "paths": [
-    "/",
-    "/alerts",
-    "/devices",
-    "/devices/{device_id}",
-    "/events",
-    "/events/{event_id}",
-    "/health",
-    "/metrics",
-    "/status"
-  ]
+  "paths": {
+    "/": ["get"],
+    "/alerts": ["get"],
+    "/devices": ["get"],
+    "/devices/{device_id}": ["get", "patch"],
+    "/events": ["get"],
+    "/events/{event_id}": ["get"],
+    "/health": ["get"],
+    "/metrics": ["get"],
+    "/status": ["get"]
+  },
+  "schemas": {
+    "DeviceLabelUpdate": {
+      "properties": {
+        "label": {
+          "anyOf": [
+            {
+              "type": "string",
+              "maxLength": 120
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Label"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object",
+      "required": ["label"],
+      "title": "DeviceLabelUpdate"
+    }
+  }
 }

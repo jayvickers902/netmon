@@ -32,6 +32,13 @@ def test_loopback_can_be_enforced(tmp_path):
         assert response.status_code == 401
         assert response.headers["www-authenticate"] == "Bearer"
         assert client.get("/status", headers={"Authorization": "Bearer secret"}).status_code == 200
+        assert client.patch("/devices/999", json={"label": "x"}).status_code == 401
+        authenticated = client.patch(
+            "/devices/999",
+            json={"label": "x"},
+            headers={"Authorization": "Bearer secret"},
+        )
+        assert authenticated.status_code == 404
 
 
 def test_bad_and_missing_credentials_do_not_leak_token(tmp_path, caplog):

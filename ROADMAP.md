@@ -133,7 +133,7 @@ Rejected sources, recorded so they are not re-litigated:
 - [x] `GET /alerts` — alert history over REST
 - **No dashboard work.** Alert history is API-only in this phase; the UI lands in v0.6
 
-## v0.6 — Interface design `[ ]` *(design phase — gated)*
+## v0.6 — Interface design `[~]` *(design phase — gated)*
 
 **Ships after v1.0, not before it.** This is a deliberate reordering, recorded rather than done
 silently: v1.0 is entirely non-visual, so building it first means the design review runs against
@@ -145,9 +145,9 @@ Everything visual accumulates here. By this point v0.2–v0.5 have produced the 
 — devices, metrics, events, outages, throughput, alerts — and the dashboard is still the
 deliberately-ugly minimum from v0.2.
 
-- [ ] Compile the complete API surface and the questions a user actually asks of it
-- [ ] **Formal Claude Design review** of the whole interface at once, before anything is built
-- [ ] Choose a direction from that review — explicitly, as a decision, not by accretion
+- [x] Compile the complete API surface and the questions a user actually asks of it
+- [x] **Formal Claude Design review** of the whole interface at once, before anything is built
+- [x] Choose a direction from that review — explicitly, as a decision, not by accretion
 - [ ] Build it: per-device drill-down, unified timeline across outages/joins/alerts, throughput
       charts scoped honestly to what is measured, on-demand diagnostics runner
 

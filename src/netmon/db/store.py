@@ -166,6 +166,16 @@ class Store:
             row = connection.execute("SELECT * FROM device WHERE id=?", (device_id,)).fetchone()
             return None if row is None else self._device_dict(connection, row)
 
+    def set_device_label(self, device_id: int, label: str | None) -> dict[str, Any] | None:
+        with self.connection() as connection:
+            row = connection.execute("SELECT * FROM device WHERE id=?", (device_id,)).fetchone()
+            if row is None:
+                return None
+            connection.execute("UPDATE device SET label=? WHERE id=?", (label, device_id))
+            updated = connection.execute("SELECT * FROM device WHERE id=?", (device_id,)).fetchone()
+            assert updated is not None
+            return self._device_dict(connection, updated)
+
     @staticmethod
     def _device_dict(connection: sqlite3.Connection, row: sqlite3.Row) -> dict[str, Any]:
         ips = connection.execute(

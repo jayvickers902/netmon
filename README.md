@@ -28,7 +28,7 @@ That constraint has real consequences, stated plainly:
 
 | Capability | Supported | Notes |
 |---|---|---|
-| Device inventory & presence | Yes | ARP table + ICMP sweep, reverse DNS / NetBIOS names, MAC→vendor |
+| Device inventory & presence | Yes | ARP table + ICMP sweep, reverse DNS / NetBIOS names, MAC→vendor, editable labels |
 | Connection health & troubleshooting | Yes | Latency, jitter, loss, DNS timing, HTTP probes, outage events, auto-traceroute |
 | WAN up/down, uptime, external IP | Yes | Router-reported via UPnP `WANIPConnection`. Distinguishes a real ISP outage from a local glitch |
 | This host's bandwidth | Yes | Per-NIC and per-process counters |
@@ -36,7 +36,7 @@ That constraint has real consequences, stated plainly:
 | **Total WAN bandwidth** | **No** | The eero implements no UPnP byte counters and no local API. See [docs/spike-upnp.md](docs/spike-upnp.md) |
 | Per-device bandwidth | Yes (opt-in) | eero cloud live rates are available with a separate non-Amazon account; passive LAN visibility remains impossible |
 | **Throttling** | **Not yet** | Requires a traffic enforcement point the current topology does not provide. See ROADMAP v1.1 |
-| Alerts & retention | Yes | Sustained rules, independent notifications, and verified SQLite rollups; API-only until v0.6 |
+| Alerts & retention | Yes | Sustained rules, independent notifications, verified SQLite rollups, and dashboard history |
 
 The total-WAN gap resolves by putting a Linux box in the traffic path as the gateway. That is
 the v1.1 hardware decision, and it is not taken unilaterally. Passive per-device visibility

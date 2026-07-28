@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- v0.6 interface design: a responsive seven-view evidence console for current health,
+  outage history, device identity, diagnostics, host bandwidth, alerts, and a read-only
+  settings mirror. All displayed measurements come from the existing REST API, unavailable
+  capabilities remain explicit states, and unsupported write-path concepts stay visibly disabled.
+- Device labels can now be saved, renamed, and cleared from the dashboard through an
+  authenticated `PATCH /devices/{device_id}` endpoint with strict input validation.
 - v1.0 hardening: bearer-token API authentication with loopback exemption, consistent SQLite
   backup/restore with integrity and schema checks, Windows Task Scheduler service scripts with
   rotating logs, and complete operator documentation. No dashboard files changed.
@@ -29,6 +35,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Windows polling no longer accumulates subprocess pipe buffers; discovery ignores incomplete
+  native ARP rows and batches ICMP work, HTTP clients are reused and closed, and outage WAN/event
+  histories discard unreachable old state.
 - Outage classification now uses only fresh positive WAN corroboration, traces toward a
   failing external target, distinguishes Windows traceroute unreachable reports from timeouts,
   and backdates recovery events to the first success in the closing streak. Outage start details

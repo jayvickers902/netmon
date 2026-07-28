@@ -44,7 +44,15 @@ def test_fake_collector_store_api_identity_and_offline(tmp_path, frozen_clock):
         assert devices[0]["hostname"] == "lamp.local"
         assert devices[0]["vendor"] == "Test Vendor"
         assert {item["ip"] for item in devices[0]["ips"]} == {"192.168.1.1", "192.168.1.2"}
-        assert client.get(f"/devices/{devices[0]['id']}").json()["mac"] == "aa:bb:cc:00:00:01"
+        device_url = f"/devices/{devices[0]['id']}"
+        assert client.get(device_url).json()["mac"] == "aa:bb:cc:00:00:01"
+        renamed = client.patch(device_url, json={"label": "  Living room lamp  "})
+        assert renamed.status_code == 200
+        assert renamed.json()["label"] == "Living room lamp"
+        assert client.get(device_url).json()["label"] == "Living room lamp"
+        assert client.patch(device_url, json={"label": ""}).json()["label"] is None
+        assert client.patch(device_url, json={"label": "x" * 121}).status_code == 422
+        assert client.patch(device_url, json={"label": "lamp", "online": False}).status_code == 422
         assert client.get("/events").json()[0]["kind"] == "device_join"
         assert "netmon" in client.get("/").text
 

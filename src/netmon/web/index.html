@@ -3,82 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>netmon</title>
-  <style>
-    :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
-    body { max-width: 1100px; margin: 2rem auto; padding: 0 1rem; }
-    main { display: grid; gap: 1.5rem; }
-    section { border: 1px solid #8885; border-radius: .6rem; padding: 1rem; }
-    h2 { margin-top: 0; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { padding: .55rem; text-align: left; border-bottom: 1px solid #8885; }
-    .dot { display: inline-block; width: .65rem; height: .65rem; border-radius: 50%; background: #e55; }
-    .online .dot { background: #2b5; }
-    .headline { font-size: 1.4rem; font-weight: 650; }
-    .healthy { color: #2b5; }
-    .problem { color: #d55; }
-    small { opacity: .75; }
-    #latency { width: 100%; height: 220px; }
-  </style>
+  <meta name="theme-color" content="#080b0e">
+  <title>netmon · network evidence console</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/assets/dashboard.css">
 </head>
 <body>
-  <h1>netmon</h1>
-  <main>
-    <section><div id="headline" class="headline">Checking connection health...</div><small id="health-detail"></small></section>
-    <section><h2>Latency</h2><canvas id="latency" width="1050" height="220" aria-label="Latency chart"></canvas></section>
-    <section><h2>Timeline</h2><table><thead><tr><th>When</th><th>Event</th><th>Details</th></tr></thead><tbody id="events"><tr><td colspan="3">Loading...</td></tr></tbody></table></section>
-    <section><h2>Devices</h2><p id="device-status">Loading devices...</p><table>
-      <thead><tr><th>Online</th><th>Vendor</th><th>Hostname</th><th>IP</th><th>MAC</th><th>Last seen</th></tr></thead>
-      <tbody id="devices"><tr><td colspan="6">Loading...</td></tr></tbody>
-    </table></section>
-  </main>
-  <script>
-    const tbody = document.getElementById('devices');
-    const deviceStatus = document.getElementById('device-status');
-    const headline = document.getElementById('headline');
-    const detail = document.getElementById('health-detail');
-    const eventBody = document.getElementById('events');
-    const escapeHtml = (value) => String(value ?? '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-    function drawLatency(points) {
-      const canvas = document.getElementById('latency'), context = canvas.getContext('2d');
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      if (!points.length) { context.fillText('No latency samples yet.', 12, 24); return; }
-      const max = Math.max(...points.map((point) => point.value), 1), left = 42, bottom = 190;
-      context.beginPath();
-      points.forEach((point, index) => {
-        const x = left + index * ((canvas.width - left - 10) / Math.max(points.length - 1, 1));
-        const y = bottom - (point.value / max) * 160;
-        index ? context.lineTo(x, y) : context.moveTo(x, y);
-      });
-      context.strokeStyle = '#4c9'; context.lineWidth = 2; context.stroke();
-      context.fillText(`${max.toFixed(1)} ms`, 4, 24); context.fillText('time', canvas.width - 34, bottom + 20);
-    }
-    async function refresh() {
-      try {
-        const [status, devices, events, metrics] = await Promise.all([
-          fetch('/status').then((response) => response.json()),
-          fetch('/devices').then((response) => response.json()),
-          fetch('/events?limit=100').then((response) => response.json()),
-          fetch('/metrics?kind=latency_rtt_ms&limit=500').then((response) => response.json())
-        ]);
-        headline.textContent = status.verdict.replaceAll('_', ' ');
-        headline.className = `headline ${status.open ? 'problem' : 'healthy'}`;
-        detail.textContent = status.since ? `Since ${status.since}` : 'No sustained outage detected';
-        deviceStatus.textContent = `${devices.length} device${devices.length === 1 ? '' : 's'}`;
-        tbody.innerHTML = devices.map((device) => `<tr class="${device.online ? 'online' : ''}">
-          <td><span class="dot" title="${device.online ? 'Online' : 'Offline'}"></span></td>
-          <td>${escapeHtml(device.vendor || 'Unknown')}</td>
-          <td>${escapeHtml(device.hostname || '-')}</td>
-          <td>${escapeHtml((device.ips || []).map((ip) => ip.ip).join(', ') || '-')}</td>
-          <td><code>${escapeHtml(device.mac)}</code></td>
-          <td><small>${escapeHtml(device.last_seen)}</small></td>
-        </tr>`).join('') || '<tr><td colspan="6">No devices discovered yet.</td></tr>';
-        eventBody.innerHTML = events.map((event) => `<tr><td><small>${escapeHtml(new Date(event.ts * 1000).toISOString())}</small></td><td>${escapeHtml(event.kind)}</td><td>${escapeHtml(event.message)}</td></tr>`).join('') || '<tr><td colspan="3">No events yet.</td></tr>';
-        drawLatency(metrics);
-      } catch (error) { headline.textContent = 'Unable to load connection health'; }
-    }
-    refresh();
-    setInterval(refresh, 10000);
-  </script>
+  <div id="app" aria-live="polite">
+    <div class="boot"><span class="boot-mark">△</span><span>collecting evidence…</span></div>
+  </div>
+  <script>window.NETMON_CONFIG=__NETMON_CONFIG__;</script>
+  <script src="/assets/dashboard.js" defer></script>
 </body>
 </html>

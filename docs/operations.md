@@ -55,6 +55,22 @@ is a deliberate trade-off: anyone with a local shell already has access to the S
 Missing or invalid credentials receive `401` with `WWW-Authenticate: Bearer`. The response does
 not identify which credential failed.
 
+## Label devices
+
+Device labels are editable from the dashboard. API clients can use the same authenticated write
+path:
+
+```http
+PATCH /devices/42
+Content-Type: application/json
+
+{"label":"Living room TV"}
+```
+
+Labels are trimmed and limited to 120 characters. Send `null` or an empty string to clear a
+label. Discovery continues to manage the device's hostname, vendor, addresses, and presence;
+the write endpoint changes only the user-assigned label.
+
 ## Run as a Windows service
 
 The installer uses the built-in Task Scheduler and must be run from an elevated PowerShell:

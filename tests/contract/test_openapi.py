@@ -14,7 +14,13 @@ def test_openapi_snapshot(tmp_path):
     actual = {
         "openapi": schema["openapi"],
         "title": schema["info"]["title"],
-        "paths": sorted(schema["paths"]),
+        "paths": {
+            path: sorted(method for method in definition if method != "parameters")
+            for path, definition in sorted(schema["paths"].items())
+        },
+        "schemas": {
+            "DeviceLabelUpdate": schema["components"]["schemas"]["DeviceLabelUpdate"],
+        },
     }
     expected = json.loads((Path(__file__).parent / "openapi_snapshot.json").read_text())
     assert actual == expected
