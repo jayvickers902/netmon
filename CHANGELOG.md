@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - v0.2 discovery: injectable ICMP/ARP/OUI/hostname probes, bounded subnet discovery, device
   presence events, REST device/event endpoints, and a dependency-free dashboard.
 
+### Changed
+
+- Assigned devices now expose a prefilled inline rename editor with explicit Save and Cancel
+  controls; browser prompts are no longer used for label changes.
+
 ### Fixed
 
 - Windows polling no longer accumulates subprocess pipe buffers; discovery ignores incomplete

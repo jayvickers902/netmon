@@ -47,3 +47,5 @@ def test_dashboard_routes_and_assets_do_not_expose_secrets(tmp_path):
         script = client.get("/assets/dashboard.js")
         assert script.status_code == 200
         assert 'method:"PATCH"' in script.text
+        assert "data-label-cancel" in script.text
+        assert "window.prompt" not in script.text

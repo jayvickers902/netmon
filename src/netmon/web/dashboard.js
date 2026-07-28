@@ -17,7 +17,7 @@
   const colors = {gateway:"#4af6c3","1.1.1.1":"#d08c60","8.8.8.8":"#58b8f0"};
   const state = {
     route: paths[location.pathname] || "now", status: null, devices: [], events: [],
-    metrics: [], alerts: [], health: false, errors: {}, loaded: false,
+    metrics: [], alerts: [], health: false, errors: {}, loaded: false, editingDeviceId: null,
   };
 
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, char => (
@@ -238,7 +238,14 @@
     const ip = device.ips?.[0]?.ip || "—";
     const tag = device.label ? "named" : String(device.mac).startsWith("02:") ? "privacy MAC" : device.online ? "online" : "offline";
     const tone = device.label ? "#4af6c3" : tag === "privacy MAC" ? "#f4584f" : "#586870";
-    return `<div class="device-row ${device.online ? "" : "offline"}"><span class="device-dot"></span><div><div class="device-name">${esc(device.label || device.hostname || device.vendor || "Unknown device")}</div><div class="device-meta">${esc(device.mac)} · ${esc(device.hostname || "no hostname")} · ${esc(tag)}</div></div><div class="device-presence"><div class="presence"></div><div class="stat-note">${device.online ? `seen ${ago(device.last_seen)} ago` : `last seen ${ago(device.last_seen)} ago`}</div></div><span class="device-ip">${esc(ip)}</span><button class="chip tone label-button" style="--tone:${tone}" type="button" data-label-device="${device.id}">${device.label ? "edit label" : "add label"}</button></div>`;
+    const editing = state.editingDeviceId === device.id;
+    const identity = editing
+      ? `<div><form class="inventory-label-form" data-label-form="${device.id}"><input class="label-input" name="label" maxlength="120" value="${esc(device.label || "")}" placeholder="Name this device" aria-label="Rename ${esc(device.label || device.mac)}" data-inline-label="${device.id}"><button class="btn" type="submit">save</button><button class="btn quiet" type="button" data-label-cancel>cancel</button></form><div class="device-meta">${esc(device.mac)} · ${esc(device.hostname || "no hostname")} · leave blank to clear</div></div>`
+      : `<div><div class="device-name">${esc(device.label || device.hostname || device.vendor || "Unknown device")}</div><div class="device-meta">${esc(device.mac)} · ${esc(device.hostname || "no hostname")} · ${esc(tag)}</div></div>`;
+    const action = editing
+      ? ""
+      : `<button class="chip tone label-button" style="--tone:${tone}" type="button" data-label-device="${device.id}" aria-label="${device.label ? `Rename ${esc(device.label)}` : `Label ${esc(device.mac)}`}">${device.label ? "rename" : "add label"}</button>`;
+    return `<div class="device-row ${device.online ? "" : "offline"}"><span class="device-dot"></span>${identity}<div class="device-presence"><div class="presence"></div><div class="stat-note">${device.online ? `seen ${ago(device.last_seen)} ago` : `last seen ${ago(device.last_seen)} ago`}</div></div><span class="device-ip">${esc(ip)}</span>${action}</div>`;
   }
 
   function diagnosticsScreen() {
@@ -349,6 +356,7 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
       const updated = await response.json();
       const index = state.devices.findIndex(device => device.id === updated.id);
       if (index >= 0) state.devices[index] = updated;
+      state.editingDeviceId = null;
     } catch (error) {
       state.errors.deviceWrite = error instanceof Error ? error.message : "unknown error";
     }
@@ -377,7 +385,8 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
   async function refreshSlow() {
     const results = await Promise.allSettled([fetchJson("/devices","devices"),fetchJson("/events?limit=100","events"),fetchJson("/alerts?limit=100","alerts")]);
     ["devices","events","alerts"].forEach((key,index)=>{ if(results[index].status==="fulfilled") state[key]=results[index].value; });
-    if (["devices","timeline","alerts"].includes(state.route)) render();
+    const labelEditorOpen = state.route === "devices" && state.editingDeviceId !== null;
+    if (["devices","timeline","alerts"].includes(state.route) && !labelEditorOpen) render();
   }
 
   document.addEventListener("click", event => {
@@ -386,12 +395,27 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
       event.preventDefault(); state.route = link.dataset.route; history.pushState({}, "", link.getAttribute("href")); render();
       return;
     }
+    const cancel = event.target.closest("[data-label-cancel]");
+    if (cancel) {
+      state.editingDeviceId = null;
+      state.errors.deviceWrite = null;
+      render();
+      return;
+    }
     const edit = event.target.closest("[data-label-device]");
     if (!edit) return;
     const device = state.devices.find(item => item.id === Number(edit.dataset.labelDevice));
     if (!device) return;
-    const label = window.prompt("Device label (leave blank to clear)", device.label || "");
-    if (label !== null) saveDeviceLabel(device.id, label);
+    state.editingDeviceId = device.id;
+    state.errors.deviceWrite = null;
+    render();
+    requestAnimationFrame(() => {
+      const input = document.querySelector(`[data-inline-label="${device.id}"]`);
+      if (input) {
+        input.focus();
+        input.select();
+      }
+    });
   });
   document.addEventListener("submit", event => {
     const form = event.target.closest("[data-label-form]");
