@@ -29,6 +29,11 @@ class SystemHostnameProbe:
 
     @staticmethod
     async def _netbios(ip: str) -> str | None:
+        # nbtstat briefly creates a visible console host on some Windows
+        # configurations even when CREATE_NO_WINDOW and STARTF_USESHOWWINDOW
+        # are supplied. Reverse DNS and mDNS remain the windowless fallbacks.
+        if _is_windows():
+            return None
         _, stdout = await SystemHostnameProbe._run_command("nbtstat", "-A", ip)
         for line in stdout.decode(errors="replace").splitlines():
             if "<00>" in line and "UNIQUE" in line:
@@ -51,12 +56,17 @@ class SystemHostnameProbe:
             # until cyclic GC. A blocking child inside the worker thread releases
             # its pipes immediately without blocking the event loop.
             try:
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
                 completed = await asyncio.to_thread(
                     subprocess.run,
                     command,
                     check=False,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                    startupinfo=startupinfo,
                 )
             except OSError:
                 return -1, b""

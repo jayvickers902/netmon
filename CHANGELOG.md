@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Windows NetBIOS hostname lookups run `nbtstat` without creating a console window.
+- Windows NetBIOS hostname lookups also request a hidden startup window for older
+  Windows console-host configurations.
+- Windows discovery no longer invokes `nbtstat`; reverse DNS and mDNS provide
+  windowless hostname resolution instead.
+- Managed-host SSH probes run without opening a Windows console window.
+
 ### Added
 
 - Opt-in managed Windows-host telemetry over key-only SSH. Each configured host records

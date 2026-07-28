@@ -62,7 +62,7 @@ async def test_windows_hostname_probe_releases_subprocess_pipes(monkeypatch):
         raise OSError
 
     def fake_run(*args, **kwargs):
-        return subprocess.CompletedProcess(args, 0, b"DEVICE <00> UNIQUE", b"")
+        return subprocess.CompletedProcess(args, 0, b"192.168.1.2 DEVICE", b"")
 
     async def fail_async_exec(*args, **kwargs):
         raise AssertionError("Windows hostname lookup must not allocate Proactor pipe transports")

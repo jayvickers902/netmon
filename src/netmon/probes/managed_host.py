@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, TypeGuard
@@ -43,8 +45,19 @@ class AsyncioCommandRunner:
     """The sole subprocess boundary for managed-host probes."""
 
     async def run(self, args: tuple[str, ...], timeout_seconds: float) -> CommandResult:
+        startupinfo = None
+        creationflags = 0
+        if sys.platform == "win32":
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
+            creationflags = subprocess.CREATE_NO_WINDOW
         process = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            startupinfo=startupinfo,
+            creationflags=creationflags,
         )
         communicate = asyncio.create_task(process.communicate())
         try:
