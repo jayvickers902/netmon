@@ -18,6 +18,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Investigation mode: authenticated investigation start/list/active/report/stop endpoints,
+  burst polling for diagnostic collectors, scheduled-speedtest suppression during a window,
+  deterministic upload-contention classification, and a dashboard investigation screen.
+  The new `[investigation]` configuration block is opt-in for auto-arm and includes the v3
+  forward-only database migration.
 - Opt-in managed Windows-host telemetry over key-only SSH. Each configured host records
   availability and NIC upload/download rates with explicit `managed_host_ssh` source tags;
   the dashboard labels these device counters as LAN-inclusive rather than total WAN traffic.

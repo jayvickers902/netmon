@@ -7,6 +7,7 @@ from datetime import datetime
 
 from netmon.collectors.base import Clock, Collector
 from netmon.config import HostNicConfig
+from netmon.investigation import InvestigationState
 from netmon.models import Sample
 from netmon.probes.host_nic import HostNicProbe, NicCounters, ProcessCounters
 
@@ -24,10 +25,19 @@ class _ProcessSnapshot:
 
 
 class HostNicCollector(Collector):
-    def __init__(self, probe: HostNicProbe, clock: Clock, config: HostNicConfig) -> None:
+    def __init__(
+        self,
+        probe: HostNicProbe,
+        clock: Clock,
+        config: HostNicConfig,
+        investigation: InvestigationState | None = None,
+        burst_interval_seconds: float | None = None,
+    ) -> None:
         self.probe = probe
         self.clock = clock
         self.config = config
+        self.investigation = investigation
+        self.burst_interval_seconds = burst_interval_seconds
         self._previous_nics: dict[str, _NicSnapshot] = {}
         self._previous_processes: dict[int, _ProcessSnapshot] = {}
 
@@ -37,6 +47,12 @@ class HostNicCollector(Collector):
 
     @property
     def interval(self) -> float:
+        if (
+            self.investigation is not None
+            and self.investigation.active
+            and self.burst_interval_seconds is not None
+        ):
+            return self.burst_interval_seconds
         return self.config.interval_seconds
 
     async def collect(self) -> list[Sample]:

@@ -221,6 +221,49 @@ Metrics use target `<host name>` and source `managed_host_ssh`:
 - `managed_host_nic_bytes_sent_rate`
 - `managed_host_nic_bytes_recv_rate`
 
+## Run an investigation
+
+Investigation mode raises the diagnostic polling cadence for a time-boxed window, pauses the
+scheduled speedtest, and computes a report from the existing samples. Start one from the
+dashboard's Investigate screen by choosing 5, 15, 30, or 60 minutes. The same operation can be
+started with curl:
+
+```powershell
+curl.exe -X POST http://127.0.0.1:8787/investigations `
+  -H "Content-Type: application/json" `
+  -d '{"duration_seconds":900,"label":"upload complaint","note":"Kitchen video call"}'
+```
+
+The server applies the configured maximum duration. Fifteen minutes is a useful default: it
+usually gives enough degraded and per-device buckets for attribution without collecting an
+unnecessarily long window. Check progress with `GET /investigations/active`; when complete,
+read `GET /investigations/{id}/report`. Stop early with
+`POST /investigations/{id}/stop`.
+
+Reports use five verdicts:
+
+- `local_link`: gateway latency or loss degraded, indicating Wi-Fi, mesh, or NIC trouble.
+- `wan_upstream`: the router reported a reconnect, or internet health degraded while the
+  gateway stayed clean and upload was low.
+- `upload_saturation`: degraded latency overlapped high estimated upload. Device attribution
+  is evidence about contributors, not a directly measured total-WAN counter.
+- `healthy`: no degraded buckets occurred during the window.
+- `inconclusive`: the available baseline or evidence could not support a safe conclusion.
+
+`coverage` reports how many degraded buckets had device data, whether eero cloud was available,
+and which managed hosts answered. `low confidence` (or a device-data fraction below 0.5) means
+the attribution is suggestive only; do not use it to identify a device when eero was unavailable,
+managed hosts were offline, or the window contains too few measured buckets. The total upload
+shown by the report is always an estimate summed from available per-device rates, not total WAN
+throughput. Per-device attribution exists only when the opt-in eero cloud source or a managed host
+is available.
+
+The scheduled speedtest is suppressed for the duration because its deliberate upload would
+manufacture the condition being investigated. A collector already asleep when the window starts
+finishes its current sleep first: burst cadence takes effect within one current collector
+interval, up to 60 seconds for the eero source, so the first minute may remain at normal
+resolution.
+
 ## Troubleshooting
 
 ### UPnP returns nothing

@@ -167,6 +167,50 @@ class ManagedHostsConfig(BaseModel):
         return self
 
 
+class BurstIntervalsConfig(BaseModel):
+    latency: float = Field(default=2.0, ge=1.0)
+    dns: float = Field(default=30.0, gt=0)
+    http: float = Field(default=30.0, gt=0)
+    wan: float = Field(default=10.0, gt=0)
+    host_nic: float = Field(default=2.0, ge=1.0)
+    # Eero's undocumented, unrate-limited cloud endpoint must not be polled more often.
+    eero: float = Field(default=30.0, ge=30.0)
+    managed_hosts: float = Field(default=10.0, ge=5.0)
+
+
+class InvestigationConfig(BaseModel):
+    enabled: bool = True
+    default_duration_seconds: float = Field(default=900.0, gt=0)
+    max_duration_seconds: float = Field(default=3600.0, gt=0)
+    uplink_mbps: float = Field(default=10.0, ge=0)
+    downlink_mbps: float = Field(default=500.0, ge=0)
+    saturation_fraction: float = Field(default=0.8, gt=0, le=1)
+    latency_degraded_ms: float = Field(default=50.0, gt=0)
+    gateway_degraded_ms: float = Field(default=30.0, gt=0)
+    loss_degraded_fraction: float = Field(default=0.05, ge=0, le=1)
+    bucket_seconds: float = Field(default=10.0, gt=0)
+    suppress_speedtest: bool = True
+    auto_arm: bool = False
+    auto_arm_duration_seconds: float = Field(default=600.0, gt=0)
+    auto_arm_cooldown_seconds: float = Field(default=1800.0, ge=0)
+    burst_intervals: BurstIntervalsConfig = Field(default_factory=BurstIntervalsConfig)
+
+    @model_validator(mode="after")
+    def durations_are_ordered(self) -> InvestigationConfig:
+        if self.default_duration_seconds > self.max_duration_seconds:
+            raise ValueError(
+                "investigation.default_duration_seconds cannot exceed "
+                "investigation.max_duration_seconds"
+            )
+        return self
+
+    @property
+    def uplink_bps(self) -> float | None:
+        if self.uplink_mbps == 0:
+            return None
+        return self.uplink_mbps * 1_000_000.0
+
+
 class RetentionConfig(BaseModel):
     raw_days: int = Field(default=7, ge=1)
     rollup_1m_days: int = Field(default=30, ge=1)
@@ -248,6 +292,7 @@ class NetmonSettings(BaseSettings):
     speedtest: SpeedtestConfig = Field(default_factory=SpeedtestConfig)
     eero: EeroConfig = Field(default_factory=EeroConfig)
     managed_hosts: ManagedHostsConfig = Field(default_factory=ManagedHostsConfig)
+    investigation: InvestigationConfig = Field(default_factory=InvestigationConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     throttle: ThrottleConfig = Field(default_factory=ThrottleConfig)

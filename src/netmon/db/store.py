@@ -6,18 +6,26 @@ import json
 import sqlite3
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from netmon.config import RetentionConfig
-from netmon.models import DeviceObservation, Event, Sample
+from netmon.models import DeviceObservation, Event, Investigation, Sample
 
 from .migrations import migrate
 
 
 def _stamp(value: datetime) -> str:
     return value.isoformat()
+
+
+class ActiveInvestigationError(RuntimeError):
+    """Raised when an investigation is started while another one is running."""
+
+
+def _datetime_from_timestamp(value: float) -> datetime:
+    return datetime.fromtimestamp(value, UTC)
 
 
 class Store:
@@ -231,6 +239,101 @@ class Store:
                 (event_id,),
             ).fetchone()
             return None if row is None else self._event_dict(row)
+
+    def create_investigation(
+        self,
+        started_at: datetime,
+        ends_at: datetime,
+        label: str | None,
+        note: str | None,
+        trigger: str,
+    ) -> Investigation:
+        try:
+            with self.connection() as connection:
+                cursor = connection.execute(
+                    "INSERT INTO investigation "
+                    "(started_at, ends_at, label, note, trigger, status) "
+                    "VALUES (?, ?, ?, ?, ?, 'running')",
+                    (started_at.timestamp(), ends_at.timestamp(), label, note, trigger),
+                )
+                assert cursor.lastrowid is not None
+                row = connection.execute(
+                    "SELECT * FROM investigation WHERE id=?", (cursor.lastrowid,)
+                ).fetchone()
+                assert row is not None
+                return self._investigation(row)
+        except sqlite3.IntegrityError as exc:
+            raise ActiveInvestigationError from exc
+
+    def active_investigation(self, now: datetime) -> Investigation | None:
+        """Return the running row; expiry is the caller's business decision.
+
+        An expired but unfinalised investigation remains visible so its caller can complete it.
+        """
+        del now
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM investigation WHERE status='running'"
+            ).fetchone()
+            return None if row is None else self._investigation(row)
+
+    def get_investigation(self, investigation_id: int) -> Investigation | None:
+        with self.connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM investigation WHERE id=?", (investigation_id,)
+            ).fetchone()
+            return None if row is None else self._investigation(row)
+
+    def list_investigations(self, limit: int = 50) -> list[Investigation]:
+        with self.connection() as connection:
+            rows = connection.execute(
+                "SELECT * FROM investigation ORDER BY started_at DESC, id DESC LIMIT ?", (limit,)
+            ).fetchall()
+            return [self._investigation(row) for row in rows]
+
+    def complete_investigation(
+        self, investigation_id: int, ended_at: datetime, verdict: dict[str, Any]
+    ) -> Investigation | None:
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE investigation SET status='complete', ended_at=?, verdict_json=? WHERE id=?",
+                (ended_at.timestamp(), json.dumps(verdict), investigation_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM investigation WHERE id=?", (investigation_id,)
+            ).fetchone()
+            return None if row is None else self._investigation(row)
+
+    def cancel_investigation(
+        self, investigation_id: int, ended_at: datetime
+    ) -> Investigation | None:
+        with self.connection() as connection:
+            connection.execute(
+                "UPDATE investigation SET status='cancelled', ended_at=? WHERE id=?",
+                (ended_at.timestamp(), investigation_id),
+            )
+            row = connection.execute(
+                "SELECT * FROM investigation WHERE id=?", (investigation_id,)
+            ).fetchone()
+            return None if row is None else self._investigation(row)
+
+    @staticmethod
+    def _investigation(row: sqlite3.Row) -> Investigation:
+        return Investigation(
+            id=int(row["id"]),
+            started_at=_datetime_from_timestamp(float(row["started_at"])),
+            ends_at=_datetime_from_timestamp(float(row["ends_at"])),
+            ended_at=(
+                None
+                if row["ended_at"] is None
+                else _datetime_from_timestamp(float(row["ended_at"]))
+            ),
+            label=row["label"],
+            note=row["note"],
+            trigger=row["trigger"],
+            status=row["status"],
+            verdict=(None if row["verdict_json"] is None else json.loads(row["verdict_json"])),
+        )
 
     def list_filtered_events(
         self,

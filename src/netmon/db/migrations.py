@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from importlib.resources import files
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 
 def migrate(connection: sqlite3.Connection) -> None:
@@ -60,4 +60,22 @@ def migrate(connection: sqlite3.Connection) -> None:
             "ON sample_rollup(metric_id, bucket_seconds, ts)"
         )
         connection.execute("INSERT INTO schema_migrations(version) VALUES (2)")
+    if 3 not in applied:
+        connection.executescript(
+            "CREATE TABLE investigation ("
+            "id INTEGER PRIMARY KEY AUTOINCREMENT,"
+            "started_at REAL NOT NULL,"
+            "ends_at REAL NOT NULL,"
+            "ended_at REAL,"
+            "label TEXT,"
+            "note TEXT,"
+            "trigger TEXT NOT NULL,"
+            "status TEXT NOT NULL,"
+            "verdict_json TEXT"
+            ");"
+            "CREATE INDEX investigation_started_at ON investigation (started_at DESC);"
+            "CREATE UNIQUE INDEX investigation_single_running "
+            "ON investigation (status) WHERE status = 'running';"
+        )
+        connection.execute("INSERT INTO schema_migrations(version) VALUES (3)")
     connection.commit()

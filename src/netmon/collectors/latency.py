@@ -7,6 +7,7 @@ from itertools import pairwise
 from netmon.collectors.base import Clock, Collector
 from netmon.collectors.health import HealthSink
 from netmon.config import LatencyConfig
+from netmon.investigation import InvestigationState
 from netmon.models import HealthObservation, Sample
 from netmon.probes.gateway import GatewayProbe
 from netmon.probes.icmp import IcmpProbe
@@ -20,12 +21,16 @@ class LatencyCollector(Collector):
         clock: Clock,
         config: LatencyConfig,
         health_sink: HealthSink | None = None,
+        investigation: InvestigationState | None = None,
+        burst_interval_seconds: float | None = None,
     ) -> None:
         self.icmp = icmp
         self.gateway = gateway
         self.clock = clock
         self.config = config
         self.health_sink = health_sink
+        self.investigation = investigation
+        self.burst_interval_seconds = burst_interval_seconds
 
     @property
     def name(self) -> str:
@@ -33,6 +38,12 @@ class LatencyCollector(Collector):
 
     @property
     def interval(self) -> float:
+        if (
+            self.investigation is not None
+            and self.investigation.active
+            and self.burst_interval_seconds is not None
+        ):
+            return self.burst_interval_seconds
         return self.config.interval_seconds
 
     async def collect(self) -> list[Sample]:

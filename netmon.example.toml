@@ -107,6 +107,46 @@ interval_seconds = 30
 # expected_mac = "aa:bb:cc:dd:ee:ff"
 # NIC counters include LAN traffic to this device and are not total WAN throughput.
 
+[investigation]
+# Investigation mode raises diagnostic poll rates for a bounded window, pauses speedtests,
+# and then classifies whether bad latency came from local hardware, upload contention, or WAN.
+enabled = true
+# Fifteen minutes is long enough to catch a recurring slowdown without making an investigation
+# an unattended background job. The server-side maximum prevents unexpectedly long runs.
+default_duration_seconds = 900
+max_duration_seconds = 3600
+# This 10 Mbps uplink is the whole reason this feature exists: the link is roughly 10 Mbps up
+# but very fast down, so upload is the scarce resource worth watching for bufferbloat.
+uplink_mbps = 10.0
+# Download capacity is informational here; it is not the suspected bottleneck on this link.
+downlink_mbps = 500.0
+# At least 80% of the configured uplink capacity counts as saturation in degraded buckets.
+saturation_fraction = 0.8
+# Compare internet and gateway RTT against their quiet baselines to separate symptoms from causes.
+latency_degraded_ms = 50.0
+gateway_degraded_ms = 30.0
+loss_degraded_fraction = 0.05
+# Ten-second buckets make latency degradation and upload samples comparable for correlation.
+bucket_seconds = 10.0
+# A speedtest deliberately fills the uplink, so it must be paused while measuring contention.
+suppress_speedtest = true
+# Automatic investigations are opt-in; manual investigations remain the default workflow.
+auto_arm = false
+auto_arm_duration_seconds = 600
+auto_arm_cooldown_seconds = 1800
+
+[investigation.burst_intervals]
+# Faster sampling improves the diagnosis, but these floors keep the burst gentle on dependencies.
+latency = 2.0
+dns = 30.0
+http = 30.0
+wan = 10.0
+host_nic = 2.0
+# The eero endpoint is undocumented and unrate-limited; 30 seconds is a project non-negotiable.
+eero = 30.0
+# SSH round-trips to Windows need headroom; do not burst this below five seconds.
+managed_hosts = 10.0
+
 [retention]
 # Raw data is kept for a week; older data is compacted before deletion to protect disk use.
 raw_days = 7

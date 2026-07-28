@@ -44,3 +44,16 @@ class Event:
     message: str
     details: dict[str, Any]
     device_id: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Investigation:
+    id: int
+    started_at: datetime
+    ends_at: datetime
+    ended_at: datetime | None
+    label: str | None
+    note: str | None
+    trigger: str
+    status: str
+    verdict: dict[str, Any] | None

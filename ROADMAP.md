@@ -151,8 +151,12 @@ deliberately-ugly minimum from v0.2.
 - [x] Opt-in managed-host telemetry: key-only SSH reads of cumulative Windows NIC counters for
       explicitly configured devices, supporting per-device evidence without passive interception
       or any v1.1 gateway enforcement capability
-- [ ] Build it: per-device drill-down, unified timeline across outages/joins/alerts, throughput
-      charts scoped honestly to what is measured, on-demand diagnostics runner
+- [ ] Build it:
+  - [ ] Per-device drill-down
+  - [ ] Unified timeline across outages/joins/alerts
+  - [ ] Throughput charts scoped honestly to what is measured
+  - [x] On-demand diagnostics runner (investigation mode: time-boxed burst collection,
+        classifier, reports, and dashboard controls)
 
 ## v1.0 — Hardening `[x]`
 

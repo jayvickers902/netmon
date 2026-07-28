@@ -9,6 +9,11 @@
     "/events": ["get"],
     "/events/{event_id}": ["get"],
     "/health": ["get"],
+    "/investigations": ["get", "post"],
+    "/investigations/active": ["get"],
+    "/investigations/{investigation_id}": ["get"],
+    "/investigations/{investigation_id}/report": ["get"],
+    "/investigations/{investigation_id}/stop": ["post"],
     "/metrics": ["get"],
     "/status": ["get"]
   },
@@ -17,13 +22,8 @@
       "properties": {
         "label": {
           "anyOf": [
-            {
-              "type": "string",
-              "maxLength": 120
-            },
-            {
-              "type": "null"
-            }
+            {"type": "string", "maxLength": 120},
+            {"type": "null"}
           ],
           "title": "Label"
         }

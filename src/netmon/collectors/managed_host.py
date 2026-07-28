@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from netmon.collectors.base import Clock, Collector
+from netmon.investigation import InvestigationState
 from netmon.models import Sample
 from netmon.probes.managed_host import (
     ManagedHostNicProbe,
@@ -32,6 +33,8 @@ class ManagedHostNicCollector(Collector):
         interval_seconds: float,
         adapter_name: str | None = None,
         expected_mac: str | None = None,
+        investigation: InvestigationState | None = None,
+        burst_interval_seconds: float | None = None,
     ) -> None:
         self.probe = probe
         self.clock = clock
@@ -39,6 +42,8 @@ class ManagedHostNicCollector(Collector):
         self.interval_seconds = interval_seconds
         self.adapter_name = adapter_name
         self.expected_mac = expected_mac
+        self.investigation = investigation
+        self.burst_interval_seconds = burst_interval_seconds
         self._previous: dict[str, _Snapshot] = {}
 
     @property
@@ -47,6 +52,12 @@ class ManagedHostNicCollector(Collector):
 
     @property
     def interval(self) -> float:
+        if (
+            self.investigation is not None
+            and self.investigation.active
+            and self.burst_interval_seconds is not None
+        ):
+            return self.burst_interval_seconds
         return self.interval_seconds
 
     async def collect(self) -> list[Sample]:

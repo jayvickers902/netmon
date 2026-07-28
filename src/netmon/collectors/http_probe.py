@@ -7,6 +7,7 @@ from collections.abc import Awaitable
 from netmon.collectors.base import Clock, Collector
 from netmon.collectors.health import HealthSink
 from netmon.config import HttpConfig
+from netmon.investigation import InvestigationState
 from netmon.models import HealthObservation, Sample
 from netmon.probes.http import HttpProbe
 
@@ -18,11 +19,15 @@ class HttpCollector(Collector):
         clock: Clock,
         config: HttpConfig,
         health_sink: HealthSink | None = None,
+        investigation: InvestigationState | None = None,
+        burst_interval_seconds: float | None = None,
     ) -> None:
         self.http = http
         self.clock = clock
         self.config = config
         self.health_sink = health_sink
+        self.investigation = investigation
+        self.burst_interval_seconds = burst_interval_seconds
 
     @property
     def name(self) -> str:
@@ -30,6 +35,12 @@ class HttpCollector(Collector):
 
     @property
     def interval(self) -> float:
+        if (
+            self.investigation is not None
+            and self.investigation.active
+            and self.burst_interval_seconds is not None
+        ):
+            return self.burst_interval_seconds
         return self.config.interval_seconds
 
     async def collect(self) -> list[Sample]:

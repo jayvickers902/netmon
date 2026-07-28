@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable
 from netmon.collectors.base import Clock, Collector
 from netmon.collectors.health import EventSink
 from netmon.config import WanConfig
+from netmon.investigation import InvestigationState
 from netmon.models import Event, Sample
 from netmon.probes.upnp import UpnpProbe, WanStatus
 
@@ -19,12 +20,16 @@ class WanStatusCollector(Collector):
         config: WanConfig,
         event_sink: EventSink | None = None,
         wan_sink: Callable[[WanStatus], Awaitable[None] | None] | None = None,
+        investigation: InvestigationState | None = None,
+        burst_interval_seconds: float | None = None,
     ) -> None:
         self.upnp = upnp
         self.clock = clock
         self.config = config
         self.event_sink = event_sink
         self.wan_sink = wan_sink
+        self.investigation = investigation
+        self.burst_interval_seconds = burst_interval_seconds
         self.previous: WanStatus | None = None
 
     @property
@@ -33,6 +38,12 @@ class WanStatusCollector(Collector):
 
     @property
     def interval(self) -> float:
+        if (
+            self.investigation is not None
+            and self.investigation.active
+            and self.burst_interval_seconds is not None
+        ):
+            return self.burst_interval_seconds
         return self.config.interval_seconds
 
     async def collect(self) -> list[Sample]:

@@ -30,6 +30,7 @@ from netmon.collectors.dns_probe import DnsCollector
 from netmon.collectors.eero_usage import EeroUsageCollector
 from netmon.collectors.host_nic import HostNicCollector
 from netmon.collectors.http_probe import HttpCollector
+from netmon.collectors.investigation_arm import InvestigationArmCollector
 from netmon.collectors.latency import LatencyCollector
 from netmon.collectors.managed_host import ManagedHostNicCollector
 from netmon.collectors.retention import RetentionCollector
@@ -37,6 +38,9 @@ from netmon.collectors.speedtest import SpeedtestCollector
 from netmon.collectors.wan_status import WanStatusCollector
 from netmon.config import NetmonSettings
 from netmon.db import DatabaseRuntimeLock, Store
+from netmon.db.store import ActiveInvestigationError
+from netmon.investigation import InvestigationState
+from netmon.investigation.service import InvestigationService
 from netmon.outage import OutageCoordinator, OutageStateMachine
 from netmon.probes.arp import create_arp_probe, create_interface_probe
 from netmon.probes.dns import ResolverDnsProbe
@@ -70,7 +74,36 @@ class DeviceLabelUpdate(BaseModel):
         return stripped or None
 
 
-def _default_scheduler(settings: NetmonSettings, store: Store, clock: Clock) -> Scheduler:
+class InvestigationCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    duration_seconds: float | None = Field(default=None, gt=0)
+    label: str | None = Field(default=None, max_length=120)
+    note: str | None = Field(default=None, max_length=2000)
+
+
+def _investigation_dict(item: Any) -> dict[str, Any]:
+    return {
+        "id": item.id,
+        "started_at": item.started_at,
+        "ends_at": item.ends_at,
+        "ended_at": item.ended_at,
+        "label": item.label,
+        "note": item.note,
+        "trigger": item.trigger,
+        "status": item.status,
+        "verdict": item.verdict,
+    }
+
+
+def _default_scheduler(
+    settings: NetmonSettings,
+    store: Store,
+    clock: Clock,
+    investigation: InvestigationState | None = None,
+    investigation_service: InvestigationService | None = None,
+) -> Scheduler:
+    investigation_state = investigation if settings.investigation.enabled else None
     gateway = create_gateway_probe()
     machine = OutageStateMachine(
         failures_to_open=settings.outage.failures_to_open,
@@ -95,12 +128,31 @@ def _default_scheduler(settings: NetmonSettings, store: Store, clock: Clock) -> 
         config=settings.discovery,
         observation_sink=store.record_discovery,
     )
+    burst = settings.investigation.burst_intervals
     latency = LatencyCollector(
-        create_icmp_probe(), gateway, clock, settings.latency, coordinator.observe
+        create_icmp_probe(),
+        gateway,
+        clock,
+        settings.latency,
+        coordinator.observe,
+        investigation_state,
+        burst.latency if investigation_state else None,
     )
-    dns = DnsCollector(ResolverDnsProbe(clock), clock, settings.dns, coordinator.observe)
+    dns = DnsCollector(
+        ResolverDnsProbe(clock),
+        clock,
+        settings.dns,
+        coordinator.observe,
+        investigation_state,
+        burst.dns if investigation_state else None,
+    )
     http = HttpCollector(
-        HttpxProbe(clock, settings.http.timeout_seconds), clock, settings.http, coordinator.observe
+        HttpxProbe(clock, settings.http.timeout_seconds),
+        clock,
+        settings.http,
+        coordinator.observe,
+        investigation_state,
+        burst.http if investigation_state else None,
     )
     wan = WanStatusCollector(
         UpnpProbe(
@@ -112,14 +164,32 @@ def _default_scheduler(settings: NetmonSettings, store: Store, clock: Clock) -> 
         settings.wan,
         event_sink=store.record_event,
         wan_sink=coordinator.wan,
+        investigation=investigation_state,
+        burst_interval_seconds=burst.wan if investigation_state else None,
     )
     collectors: list[Collector] = [discovery, latency, dns, http]
     if settings.wan.enabled:
         collectors.append(wan)
     if settings.host_nic.enabled:
-        collectors.append(HostNicCollector(PsutilHostNicProbe(), clock, settings.host_nic))
+        collectors.append(
+            HostNicCollector(
+                PsutilHostNicProbe(),
+                clock,
+                settings.host_nic,
+                investigation_state,
+                burst.host_nic if investigation_state else None,
+            )
+        )
     if settings.speedtest.enabled:
-        collectors.append(SpeedtestCollector(HttpxSpeedtestProbe(clock), clock, settings.speedtest))
+        collectors.append(
+            SpeedtestCollector(
+                HttpxSpeedtestProbe(clock),
+                clock,
+                settings.speedtest,
+                investigation_state,
+                settings.investigation.suppress_speedtest,
+            )
+        )
     if settings.eero.enabled:
         token_store = FileEeroTokenStore(settings.eero.token_path)
         collectors.append(
@@ -129,6 +199,8 @@ def _default_scheduler(settings: NetmonSettings, store: Store, clock: Clock) -> 
                 clock,
                 settings.eero,
                 token_store,
+                investigation_state,
+                burst.eero if investigation_state else None,
             )
         )
     if settings.managed_hosts.enabled:
@@ -149,6 +221,8 @@ def _default_scheduler(settings: NetmonSettings, store: Store, clock: Clock) -> 
                     settings.managed_hosts.interval_seconds,
                     host.adapter_name,
                     host.expected_mac,
+                    investigation_state,
+                    burst.managed_hosts if investigation_state else None,
                 )
             )
     collectors.append(RetentionCollector(store, clock, settings.retention))
@@ -165,6 +239,21 @@ def _default_scheduler(settings: NetmonSettings, store: Store, clock: Clock) -> 
                 settings.alerts,
                 AlertEvaluator(settings.alerts.rules, settings.alerts.cooldown_seconds),
                 NotificationDispatcher(notifiers),
+            )
+        )
+    if (
+        settings.investigation.enabled
+        and settings.investigation.auto_arm
+        and investigation_service is not None
+    ):
+        # coordinator.status, not the Scheduler: the Scheduler is built from this very list, so
+        # depending on it here would be circular. Both expose the same dict.
+        collectors.append(
+            InvestigationArmCollector(
+                investigation_service,
+                coordinator.status,
+                clock,
+                settings.investigation,
             )
         )
     return Scheduler(
@@ -184,8 +273,35 @@ def create_app(
     application_settings = settings or NetmonSettings()
     application_store = store or Store(application_settings.database.path)
     application_clock = clock or RealClock()
+    investigation_state = (
+        InvestigationState(application_clock)
+        if application_settings.investigation.enabled
+        else None
+    )
+    investigation_service = (
+        InvestigationService(
+            application_store,
+            investigation_state,
+            application_clock,
+            application_settings.investigation,
+            {
+                host.name: host.expected_mac
+                for host in application_settings.managed_hosts.hosts
+                if host.expected_mac is not None
+            },
+        )
+        if investigation_state is not None
+        else None
+    )
+    # Built before the scheduler so the auto-arm collector can be handed the same service the
+    # endpoints use. One state object and one service, shared — two would mean the API arms a
+    # flag no collector reads, which fails completely silently.
     application_scheduler = scheduler or _default_scheduler(
-        application_settings, application_store, application_clock
+        application_settings,
+        application_store,
+        application_clock,
+        investigation_state,
+        investigation_service,
     )
     expected_token = application_settings.api.token
     database_lock = DatabaseRuntimeLock(application_store.path)
@@ -279,6 +395,62 @@ def create_app(
     ) -> list[dict[str, Any]]:
         return application_store.list_alerts(limit, severity, start, end)
 
+    def require_investigation() -> InvestigationService:
+        if investigation_service is None:
+            raise HTTPException(status_code=404, detail="Investigations are disabled")
+        investigation_service.finalise_if_expired()
+        return investigation_service
+
+    @app.post("/investigations", status_code=201)
+    async def start_investigation(request: InvestigationCreate) -> dict[str, Any]:
+        service = require_investigation()
+        try:
+            return _investigation_dict(
+                service.start(request.duration_seconds, request.label, request.note)
+            )
+        except ActiveInvestigationError as exc:
+            raise HTTPException(
+                status_code=409, detail="An investigation is already active"
+            ) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    @app.get("/investigations")
+    async def investigations(limit: int = Query(default=50, ge=1, le=1000)) -> list[dict[str, Any]]:
+        require_investigation()
+        return [_investigation_dict(item) for item in application_store.list_investigations(limit)]
+
+    @app.get("/investigations/active")
+    async def active_investigation() -> dict[str, Any] | None:
+        require_investigation()
+        item = application_store.active_investigation(application_clock.now())
+        return None if item is None else _investigation_dict(item)
+
+    @app.get("/investigations/{investigation_id}")
+    async def get_investigation(investigation_id: int) -> dict[str, Any]:
+        require_investigation()
+        item = application_store.get_investigation(investigation_id)
+        if item is None:
+            raise HTTPException(status_code=404, detail="Investigation not found")
+        return _investigation_dict(item)
+
+    @app.get("/investigations/{investigation_id}/report")
+    async def investigation_report(investigation_id: int) -> dict[str, Any]:
+        service = require_investigation()
+        try:
+            report = service.report(investigation_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Investigation not found") from exc
+        return {key: getattr(report, key) for key in report.__dataclass_fields__}
+
+    @app.post("/investigations/{investigation_id}/stop")
+    async def stop_investigation(investigation_id: int) -> dict[str, Any]:
+        service = require_investigation()
+        try:
+            return _investigation_dict(service.stop(investigation_id))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail="Investigation not found") from exc
+
     @app.get("/status")
     async def status() -> dict[str, object]:
         return application_scheduler.current_status()
@@ -352,6 +524,14 @@ def _dashboard_config(settings: NetmonSettings) -> dict[str, Any]:
             "enabled": settings.managed_hosts.enabled,
             "interval_seconds": settings.managed_hosts.interval_seconds,
             "hosts": [host.name for host in settings.managed_hosts.hosts],
+        },
+        "investigation": {
+            "enabled": settings.investigation.enabled,
+            "default_duration_seconds": settings.investigation.default_duration_seconds,
+            "max_duration_seconds": settings.investigation.max_duration_seconds,
+            "uplink_mbps": settings.investigation.uplink_mbps,
+            "downlink_mbps": settings.investigation.downlink_mbps,
+            "saturation_fraction": settings.investigation.saturation_fraction,
         },
     }
 

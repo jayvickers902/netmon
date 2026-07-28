@@ -37,6 +37,7 @@ That constraint has real consequences, stated plainly:
 | Per-device bandwidth | Yes (opt-in) | eero cloud live rates are available with a separate non-Amazon account; passive LAN visibility remains impossible |
 | **Throttling** | **Not yet** | Requires a traffic enforcement point the current topology does not provide. See ROADMAP v1.1 |
 | Alerts & retention | Yes | Sustained rules, independent notifications, verified SQLite rollups, and dashboard history |
+| On-demand investigation | Yes | Distinguishes local-link, upstream, and upload contention. Attributes contention per-device only with opt-in eero cloud or managed-host telemetry; total WAN throughput remains unavailable and the displayed total is an estimate summed from per-device rates |
 
 The total-WAN gap resolves by putting a Linux box in the traffic path as the gateway. That is
 the v1.1 hardware decision, and it is not taken unilaterally. Passive per-device visibility

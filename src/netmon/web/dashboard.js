@@ -6,18 +6,19 @@
   const paths = {
     "/": "now", "/timeline": "timeline", "/devices-view": "devices",
     "/diagnostics": "diagnostics", "/bandwidth": "bandwidth",
-    "/alerts-view": "alerts", "/settings": "settings",
+    "/alerts-view": "alerts", "/settings": "settings", "/investigate": "investigate",
   };
   const nav = [
     ["now", "◉", "Now", "/"], ["timeline", "⌁", "Timeline", "/timeline"],
     ["devices", "⌬", "Devices", "/devices-view"], ["diagnostics", "≈", "Diagnostics", "/diagnostics"],
     ["bandwidth", "⇅", "Bandwidth", "/bandwidth"], ["alerts", "◬", "Alerts", "/alerts-view"],
-    ["settings", "⊟", "Settings", "/settings"],
+    ["settings", "⊟", "Settings", "/settings"], ["investigate", "!", "Investigate", "/investigate"],
   ];
   const colors = {gateway:"#4af6c3","1.1.1.1":"#d08c60","8.8.8.8":"#58b8f0"};
   const state = {
     route: paths[location.pathname] || "now", status: null, devices: [], events: [],
     metrics: [], alerts: [], health: false, errors: {}, loaded: false, editingDeviceId: null,
+    investigation: null, investigationReport: null, investigations: [], investigationDuration: 900,
   };
 
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, char => (
@@ -339,6 +340,73 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
     ];
     return `<div class="screen">${intro}<div class="settings-grid">${sections.map(([title,key,values]) => settingCard(title,key,values)).join("")}</div></div>`;
   }
+
+  const investigationCapacity = () => {
+    const mbps = config.investigation?.uplink_mbps;
+    return finite(mbps) && Number(mbps) > 0 ? Number(mbps) * 1000000 : null;
+  };
+  const investigationRows = (kind, startedAt) => state.metrics.filter(row => {
+    const ts = Number(row.ts);
+    return row.kind === kind && finite(ts) && finite(row.value) && (!finite(startedAt) || ts >= Number(startedAt));
+  }).slice(-180);
+  const investigationChart = (rows, color, label, reference = null) => {
+    const capacity = reference && finite(reference) ? Number(reference) : null;
+    const values = rows.map(row => Number(row.value)).filter(Number.isFinite);
+    const max = Math.max(capacity || 0, ...values, 1);
+    const path = svgPath(rows, 600, 112, 0, max);
+    const referenceY = capacity === null ? null : 112 - 7 - (capacity / max) * 98;
+    return `<div class="chartbox investigation-chart"><span class="chart-label">${esc(label)}</span><svg class="chart" viewBox="0 0 600 112" preserveAspectRatio="none"><path d="M0 28H600M0 56H600M0 84H600" stroke="#161d26" vector-effect="non-scaling-stroke"/><path d="${path}" fill="none" stroke="${color}" stroke-width="1.7" vector-effect="non-scaling-stroke"/>${referenceY === null ? "" : `<path d="M0 ${referenceY.toFixed(1)}H600" stroke="#d8a657" stroke-width="1.4" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>`}</svg></div>`;
+  };
+  const investigationVerdict = report => report?.verdict ? String(report.verdict).replaceAll("_", " ") : "report unavailable";
+  const investigationCoverage = coverage => {
+    const fraction = finite(coverage?.device_data_fraction) ? Number(coverage.device_data_fraction) : null;
+    const available = coverage?.eero_available === true ? "available" : coverage?.eero_available === false ? "unavailable" : "—";
+    const hosts = Array.isArray(coverage?.managed_hosts_available) ? coverage.managed_hosts_available : [];
+    return `<div class="coverage-block"><div class="coverage-name"><span>Device data fraction</span><span class="coverage-frac">${fraction === null ? "—" : fmt(fraction * 100, 0) + "%"}</span></div><div class="bar"><i style="width:${fraction === null ? 2 : Math.max(2, Math.min(100, fraction * 100))}%"></i></div><div class="coverage-note">eero cloud ${available} · managed hosts ${hosts.length ? hosts.map(esc).join(", ") : "none reported"} · ${finite(coverage?.degraded_buckets_with_device_data) ? fmt(coverage.degraded_buckets_with_device_data, 0) : "—"} / ${finite(coverage?.degraded_buckets) ? fmt(coverage.degraded_buckets, 0) : "—"} degraded buckets had device data.</div></div>`;
+  };
+  function investigationReportScreen(report) {
+    const confidence = String(report?.confidence || "low");
+    const tone = confidence === "high" ? "#3fb950" : confidence === "medium" ? "#d8a657" : "#f4584f";
+    const reasons = Array.isArray(report?.reasons) ? report.reasons : [];
+    const attributions = Array.isArray(report?.attributions) ? report.attributions : [];
+    const caveats = Array.isArray(report?.caveats) ? report.caveats : [];
+    const table = attributions.length ? `<div class="investigation-table-wrap"><table class="investigation-table"><thead><tr><th>Device</th><th>Mean</th><th>Peak</th><th>Share degraded</th><th>Correlation</th></tr></thead><tbody>${attributions.map(item => `<tr><td>${esc(item.label || item.name || item.device || "Unknown device")}</td><td>${bytes(item.mean_upload_bps)}</td><td>${bytes(item.peak_upload_bps)}</td><td>${finite(item.share_of_upload) ? fmt(Number(item.share_of_upload) * 100, 0) + "%" : "—"}</td><td>${fmt(item.correlation_with_latency, 2)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="reason-detail">Attribution is unavailable for this verdict.</div>`;
+    const reasonsHtml = reasons.length ? reasons.map(reason => `<div class="reason"><span class="reason-mark" style="--reason:${tone}">·</span><div class="reason-detail">${esc(reason)}</div></div>`).join("") : `<div class="reason-detail">No independently checkable reasons were returned.</div>`;
+    const caveatsHtml = caveats.length ? caveats.map(caveat => `<div class="reason-detail">· ${esc(caveat)}</div>`).join("") : `<div class="reason-detail">No additional caveats were reported.</div>`;
+    return `<div class="screen"><section class="panel hero investigation-verdict" style="--tone:${tone}"><div class="hero-inner"><div class="hero-copy"><div class="eyebrow">/investigate · completed verdict</div><div class="hero-verdict">${esc(investigationVerdict(report))}</div><div class="hero-headline">${confidence === "low" ? "Low confidence: " : ""}${esc(report?.headline || "The investigation did not return a headline.")}</div><div class="chips"><span class="chip tone" style="--tone:${tone}">${esc(confidence)} confidence</span><span class="chip">window <strong>${duration(Number(report?.total_seconds))}</strong></span></div></div></div></section>
+      ${panel("Reasons", reasonsHtml)}${panel("Attribution", table, attributions.length ? `${attributions.length} candidates` : "not computed")}
+      ${panel("Coverage + caveats", `${investigationCoverage(report?.coverage || {})}<div class="investigation-caveats"><div class="eyebrow">Caveats</div>${caveatsHtml}</div>`, "reported explicitly")}</div>`;
+  }
+  function investigationRunningScreen(active) {
+    const started = Number(active?.started_at), ends = Number(active?.ends_at || active?.ended_at);
+    const remaining = finite(ends) ? Math.max(0, ends - Date.now() / 1000) : null;
+    const latency = investigationRows("latency_rtt_ms", started).filter(row => ["1.1.1.1", "8.8.8.8"].includes(row.target));
+    const upload = investigationRows("eero_device_upload_rate", started);
+    const totalUpload = [...new Set(upload.map(row => row.ts))].map(ts => ({ts, value: upload.filter(row => row.ts === ts).map(row => Number(row.value)).filter(Number.isFinite).reduce((sum, value) => sum + value, 0)}));
+    const capacity = investigationCapacity();
+    const devices = [...new Set(upload.map(row => row.target).filter(Boolean))].map(target => {
+      const rows = upload.filter(row => row.target === target);
+      return {target, value: Number(rows.at(-1)?.value)};
+    }).sort((a,b) => (finite(b.value) ? b.value : -1) - (finite(a.value) ? a.value : -1));
+    const deviceList = devices.length ? devices.map(item => `<div class="adapter"><span class="status-dot"></span><span>${esc(item.target)}<div class="stat-note">current eero upload rate</div></span><span class="adapter-rate">${bytes(item.value)}</span></div>`).join("") : `<div class="reason-detail">No per-device upload samples yet. eero data is allowed to fail soft.</div>`;
+    return `<div class="screen">${panel("Investigation running", `<div class="grid-3"><div class="stat"><div class="stat-label">time remaining</div><div class="stat-value" style="color:var(--mint)">${duration(remaining)}</div><div class="stat-note">watch window · ${duration(finite(ends - started) ? ends - started : null)}</div></div><div class="stat"><div class="stat-label">uplink reference</div><div class="stat-value">${capacity === null ? "—" : fmt(capacity / 1000000, 1)}<span class="unit"> Mbps</span></div><div class="stat-note">configured capacity</div></div><div class="stat"><div class="stat-label">sampling</div><div class="stat-value">burst</div><div class="stat-note">speedtest paused while active</div></div></div><p class="body-copy">Diagnostic collectors are polling faster, scheduled speedtest is paused, and this screen is watching the chosen window. Total upload is estimated from per-device eero rates, not measured directly at the WAN.</p><button class="btn" type="button" data-investigation-stop="${esc(active?.id)}">Stop now</button>`, `started ${stamp(started)}`)}
+      ${panel("Internet RTT", latency.length ? investigationChart(latency, "#d08c60", "external RTT · ms") : `<div class="reason-detail">No internet RTT samples in this window yet.</div>`)}
+      ${panel("Estimated total upload", investigationChart(totalUpload, "#4af6c3", `sum of eero device rates${capacity === null ? "" : " · amber = " + fmt(capacity / 1000000, 1) + " Mbps capacity"}`, capacity), "estimate · capacity reference")}
+      ${panel("Per-device upload", deviceList, `${devices.length} ranked now`)}</div>`;
+  }
+  function investigationIdleScreen() {
+    const durations = [300, 900, 1800, 3600];
+    const error = state.errors.investigationWrite ? `<div class="inline-error">${esc(state.errors.investigationWrite)}</div>` : "";
+    return `<div class="screen">${error}${panel("Start investigation", `<div class="eyebrow">time-boxed diagnostics</div><div class="chips investigation-duration">${durations.map(value => `<button class="chip ${state.investigationDuration === value ? "tone" : ""}" style="--tone:#4af6c3" type="button" data-investigation-duration="${value}">${value / 60} min</button>`).join("")}</div><p class="body-copy">Pressing start raises poll rates on the diagnostic collectors, pauses the scheduled speedtest, and watches the network for the chosen period. It does not shape traffic or intercept packets.</p><button class="btn" type="button" data-investigation-start>Start investigation</button>`, "operator-controlled")}${investigationHistory()}</div>`;
+  }
+  function investigationHistory() {
+    const rows = Array.isArray(state.investigations) ? state.investigations : [];
+    return panel("History", rows.length ? rows.map(item => `<button class="investigation-history-row" type="button" data-investigation-report="${esc(item.id)}"><span class="status-dot ${item.status === "cancelled" ? "down" : ""}"></span><span>${esc(investigationVerdict(item.report || item))}<div class="stat-note">${esc(stamp(item.started_at))} · ${esc(item.status || "unknown")}</div></span><span class="adapter-rate">${duration(item.ended_at && item.started_at ? Number(item.ended_at) - Number(item.started_at) : null)}</span></button>`).join("") : `<div class="reason-detail">No completed investigations yet.</div>`, `${rows.length} records`);
+  }
+  function investigateScreen() {
+    if (state.investigationReport) return investigationReportScreen(state.investigationReport);
+    return state.investigation ? investigationRunningScreen(state.investigation) : investigationIdleScreen();
+  }
   function settingCard(title,key,values={}) {
     return panel(title, Object.entries(values).map(([name,value]) => {
       const display = Array.isArray(value) ? (value.length ? value.join(", ") : "[]") : value === null || value === "" ? "auto" : String(value);
@@ -348,7 +416,7 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
   }
 
   function render() {
-    const screens = {now:nowScreen,timeline:timelineScreen,devices:devicesScreen,diagnostics:diagnosticsScreen,bandwidth:bandwidthScreen,alerts:alertsScreen,settings:settingsScreen};
+    const screens = {now:nowScreen,timeline:timelineScreen,devices:devicesScreen,diagnostics:diagnosticsScreen,bandwidth:bandwidthScreen,alerts:alertsScreen,settings:settingsScreen,investigate:investigateScreen};
     app.innerHTML = shell((screens[state.route] || nowScreen)());
   }
 
@@ -376,17 +444,59 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
     }
     render();
   }
+  async function refreshInvestigations(renderRoute = false) {
+    const previous = state.investigation;
+    const results = await Promise.allSettled([fetchJson("/investigations/active", "investigationActive"), fetchJson("/investigations?limit=20", "investigations")]);
+    if (results[0].status === "fulfilled") {
+      state.investigation = results[0].value;
+      if (previous?.id && !state.investigation) {
+        try { state.investigationReport = await fetchJson(`/investigations/${encodeURIComponent(previous.id)}/report`, "investigationReport"); }
+        catch { state.errors.investigationReport = "completed report is not available yet"; }
+      }
+    }
+    if (results[1].status === "fulfilled") state.investigations = Array.isArray(results[1].value) ? results[1].value : results[1].value?.items || [];
+    if (renderRoute && state.route === "investigate") render();
+  }
+  async function startInvestigation() {
+    state.errors.investigationWrite = null;
+    try {
+      const response = await fetch("/investigations", {method:"POST", headers:{"Accept":"application/json", "Content-Type":"application/json"}, body:JSON.stringify({duration_seconds:state.investigationDuration})});
+      if (!response.ok) throw new Error(`start returned ${response.status}`);
+      state.investigation = await response.json(); state.investigationReport = null;
+    } catch (error) { state.errors.investigationWrite = error instanceof Error ? error.message : "could not start investigation"; }
+    render();
+  }
+  async function stopInvestigation(id) {
+    if (!id) return;
+    state.errors.investigationWrite = null;
+    try {
+      const response = await fetch(`/investigations/${encodeURIComponent(id)}/stop`, {method:"POST", headers:{Accept:"application/json"}});
+      if (!response.ok) throw new Error(`stop returned ${response.status}`);
+      const record = await response.json();
+      state.investigation = null;
+      state.investigationReport = record.report || await fetchJson(`/investigations/${encodeURIComponent(id)}/report`, "investigationReport");
+      await refreshInvestigations(false);
+    } catch (error) { state.errors.investigationWrite = error instanceof Error ? error.message : "could not stop investigation"; }
+    render();
+  }
+  async function showInvestigationReport(id) {
+    try { state.investigationReport = await fetchJson(`/investigations/${encodeURIComponent(id)}/report`, "investigationReport"); state.investigation = null; }
+    catch (error) { state.errors.investigationWrite = error instanceof Error ? error.message : "could not load report"; }
+    render();
+  }
   async function initialLoad() {
     const results = await Promise.allSettled([
       fetchJson("/health","health"), fetchJson("/status","status"), fetchJson("/devices","devices"),
       fetchJson("/events?limit=100","events"), fetchJson("/metrics?limit=10000","metrics"),
-      fetchJson("/alerts?limit=100","alerts"),
+      fetchJson("/alerts?limit=100","alerts"), fetchJson("/investigations/active","investigationActive"), fetchJson("/investigations?limit=20","investigations"),
     ]);
-    const keys = ["health","status","devices","events","metrics","alerts"];
+    const keys = ["health","status","devices","events","metrics","alerts","investigationActive","investigations"];
     results.forEach((result,index) => {
       const key = keys[index];
       if (result.status === "fulfilled") {
         if (key === "health") state.health = result.value.status === "ok";
+        else if (key === "investigationActive") state.investigation = result.value;
+        else if (key === "investigations") state.investigations = Array.isArray(result.value) ? result.value : result.value?.items || [];
         else state[key] = result.value;
       } else state.errors[key] = result.reason.message;
     });
@@ -399,8 +509,9 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
   async function refreshSlow() {
     const results = await Promise.allSettled([fetchJson("/devices","devices"),fetchJson("/events?limit=100","events"),fetchJson("/alerts?limit=100","alerts")]);
     ["devices","events","alerts"].forEach((key,index)=>{ if(results[index].status==="fulfilled") state[key]=results[index].value; });
+    await refreshInvestigations(false);
     const labelEditorOpen = state.route === "devices" && state.editingDeviceId !== null;
-    if (["devices","timeline","alerts"].includes(state.route) && !labelEditorOpen) render();
+    if (["devices","timeline","alerts","investigate"].includes(state.route) && !labelEditorOpen) render();
   }
 
   document.addEventListener("click", event => {
@@ -409,6 +520,18 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
       event.preventDefault(); state.route = link.dataset.route; history.pushState({}, "", link.getAttribute("href")); render();
       return;
     }
+    const durationButton = event.target.closest("[data-investigation-duration]");
+    if (durationButton) {
+      state.investigationDuration = Number(durationButton.dataset.investigationDuration);
+      render();
+      return;
+    }
+    const start = event.target.closest("[data-investigation-start]");
+    if (start) { startInvestigation(); return; }
+    const stop = event.target.closest("[data-investigation-stop]");
+    if (stop) { stopInvestigation(stop.dataset.investigationStop); return; }
+    const report = event.target.closest("[data-investigation-report]");
+    if (report) { showInvestigationReport(report.dataset.investigationReport); return; }
     const cancel = event.target.closest("[data-label-cancel]");
     if (cancel) {
       state.editingDeviceId = null;

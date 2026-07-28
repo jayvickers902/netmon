@@ -6,6 +6,7 @@ from datetime import datetime
 
 from netmon.collectors.base import Clock, Collector
 from netmon.config import EeroConfig
+from netmon.investigation import InvestigationState
 from netmon.models import Sample
 from netmon.probes.eero_cloud import (
     EeroAuthenticationError,
@@ -24,12 +25,16 @@ class EeroUsageCollector(Collector):
         clock: Clock,
         config: EeroConfig,
         token_store: EeroTokenStore | None = None,
+        investigation: InvestigationState | None = None,
+        burst_interval_seconds: float | None = None,
     ) -> None:
         self.probe = probe
         self.token = token
         self.clock = clock
         self.config = config
         self.token_store = token_store
+        self.investigation = investigation
+        self.burst_interval_seconds = burst_interval_seconds
 
     @property
     def name(self) -> str:
@@ -37,6 +42,12 @@ class EeroUsageCollector(Collector):
 
     @property
     def interval(self) -> float:
+        if (
+            self.investigation is not None
+            and self.investigation.active
+            and self.burst_interval_seconds is not None
+        ):
+            return self.burst_interval_seconds
         return self.config.interval_seconds
 
     async def collect(self) -> list[Sample]:

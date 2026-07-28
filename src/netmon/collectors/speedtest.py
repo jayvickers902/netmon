@@ -2,17 +2,30 @@
 
 from __future__ import annotations
 
+import logging
+
 from netmon.collectors.base import Clock, Collector
 from netmon.config import SpeedtestConfig
+from netmon.investigation import InvestigationState
 from netmon.models import Sample
 from netmon.probes.speedtest import SpeedtestProbe
 
 
 class SpeedtestCollector(Collector):
-    def __init__(self, probe: SpeedtestProbe, clock: Clock, config: SpeedtestConfig) -> None:
+    def __init__(
+        self,
+        probe: SpeedtestProbe,
+        clock: Clock,
+        config: SpeedtestConfig,
+        investigation: InvestigationState | None = None,
+        suppress_during_investigation: bool = False,
+    ) -> None:
         self.probe = probe
         self.clock = clock
         self.config = config
+        self.investigation = investigation
+        self.suppress_during_investigation = suppress_during_investigation
+        self._logger = logging.getLogger(__name__)
 
     @property
     def name(self) -> str:
@@ -23,6 +36,15 @@ class SpeedtestCollector(Collector):
         return self.config.interval_seconds
 
     async def collect(self) -> list[Sample]:
+        if (
+            self.investigation is not None
+            and self.investigation.active
+            and self.suppress_during_investigation
+        ):
+            # Speedtest deliberately saturates the uplink; running it now would
+            # manufacture the verdict.
+            self._logger.info("Skipping speedtest during active investigation")
+            return []
         now = self.clock.now()
         result = await self.probe.run(self.config)
         values = {
