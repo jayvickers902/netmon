@@ -86,6 +86,26 @@ enabled = false
 interval_seconds = 60
 token_path = "data/eero.token"
 base_url = "https://api-user.e2ro.com"
+# `netmon eero-login` lists the IDs available to the authenticated account.
+# Leave unset only when the account has exactly one network.
+# network_id = "123456"
+
+[managed_hosts]
+# Opt-in SSH telemetry for Windows devices you administer. It is not passive network capture.
+enabled = false
+interval_seconds = 30
+# Each host needs an SSH server configured for key-only authentication. Verify the host key first;
+# netmon requires StrictHostKeyChecking and never accepts a new key interactively.
+# [[managed_hosts.hosts]]
+# name = "office-pc"
+# address = "192.168.4.50"
+# username = "netmon"
+# identity_file = "C:/Users/you/.ssh/netmon_ed25519"
+# port = 22
+# timeout_seconds = 10
+# adapter_name = "Ethernet"
+# expected_mac = "aa:bb:cc:dd:ee:ff"
+# NIC counters include LAN traffic to this device and are not total WAN throughput.
 
 [retention]
 # Raw data is kept for a week; older data is compacted before deletion to protect disk use.

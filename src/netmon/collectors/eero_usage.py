@@ -7,17 +7,29 @@ from datetime import datetime
 from netmon.collectors.base import Clock, Collector
 from netmon.config import EeroConfig
 from netmon.models import Sample
-from netmon.probes.eero_cloud import EeroCloudError, EeroCloudProbe
+from netmon.probes.eero_cloud import (
+    EeroAuthenticationError,
+    EeroCloudError,
+    EeroCloudProbe,
+    EeroDeviceRate,
+)
+from netmon.probes.eero_token import EeroTokenStore
 
 
 class EeroUsageCollector(Collector):
     def __init__(
-        self, probe: EeroCloudProbe, token: str | None, clock: Clock, config: EeroConfig
+        self,
+        probe: EeroCloudProbe,
+        token: str | None,
+        clock: Clock,
+        config: EeroConfig,
+        token_store: EeroTokenStore | None = None,
     ) -> None:
         self.probe = probe
         self.token = token
         self.clock = clock
         self.config = config
+        self.token_store = token_store
 
     @property
     def name(self) -> str:
@@ -32,7 +44,14 @@ class EeroUsageCollector(Collector):
         if not self.token:
             return [self._unavailable(now)]
         try:
-            rates = await self.probe.device_rates(self.token)
+            rates = await self.probe.device_rates(self.token, self.config.network_id)
+        except EeroAuthenticationError:
+            try:
+                rates = await self._refresh_and_retry()
+            except EeroCloudError:
+                return [self._unavailable(now)]
+            except Exception:
+                return [self._unavailable(now)]
         except EeroCloudError:
             return [self._unavailable(now)]
         except Exception:
@@ -66,6 +85,18 @@ class EeroUsageCollector(Collector):
                 )
             )
         return samples
+
+    async def close(self) -> None:
+        await self.probe.aclose()
+
+    async def _refresh_and_retry(self) -> list[EeroDeviceRate]:
+        if self.token is None:
+            raise EeroAuthenticationError("eero cloud authentication failed")
+        refreshed = await self.probe.refresh(self.token)
+        self.token = refreshed
+        if self.token_store is not None:
+            await self.token_store.save(refreshed)
+        return await self.probe.device_rates(refreshed, self.config.network_id)
 
     @staticmethod
     def _unavailable(now: datetime) -> Sample:

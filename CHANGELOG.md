@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Opt-in managed Windows-host telemetry over key-only SSH. Each configured host records
+  availability and NIC upload/download rates with explicit `managed_host_ssh` source tags;
+  the dashboard labels these device counters as LAN-inclusive rather than total WAN traffic.
 - v0.6 interface design: a responsive seven-view evidence console for current health,
   outage history, device identity, diagnostics, host bandwidth, alerts, and a read-only
   settings mirror. All displayed measurements come from the existing REST API, unavailable
@@ -37,9 +40,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Assigned devices now expose a prefilled inline rename editor with explicit Save and Cancel
   controls; browser prompts are no longer used for label changes.
+- eero cloud polling now discovers account networks and follows their advertised device
+  resources, requires explicit selection when an account has multiple networks, converts nested
+  Mbps usage to bytes per second, and refreshes expiring sessions without storing passwords.
 
 ### Fixed
 
+- eero's real `{meta, data}` response envelopes are now validated, authentication and schema
+  failures are sanitized, cross-origin resource URLs are rejected before credentials are sent,
+  device MACs are normalized to discovery identities, and malformed, negative, or non-finite
+  rates are skipped without blanking healthy devices or escaping the collector.
 - Windows polling no longer accumulates subprocess pipe buffers; discovery ignores incomplete
   native ARP rows and batches ICMP work, HTTP clients are reused and closed, and outage WAN/event
   histories discard unreachable old state.

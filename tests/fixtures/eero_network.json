@@ -1,0 +1,15 @@
+{
+  "meta": {
+    "code": 200,
+    "server_time": 1760000003
+  },
+  "data": {
+    "id": "900001",
+    "name": "Home",
+    "resources": {
+      "devices": {
+        "url": "/2.2/networks/900001/devices"
+      }
+    }
+  }
+}

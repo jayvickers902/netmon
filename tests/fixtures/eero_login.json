@@ -1,1 +1,9 @@
-{"user_token": "login-token"}
+{
+  "meta": {
+    "code": 200,
+    "server_time": 1760000000
+  },
+  "data": {
+    "user_token": "login-token"
+  }
+}

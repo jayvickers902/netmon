@@ -287,8 +287,19 @@
     const adapters = panel("Adapters", allTargets.length ? allTargets.map(target => { const down=Number(latest("host_nic_bytes_recv_rate",target)?.value||0),up=Number(latest("host_nic_bytes_sent_rate",target)?.value||0); return `<div class="adapter"><span class="status-dot"></span><span>${esc(target)}<div class="stat-note">host adapter</div></span><span class="adapter-rate">${bytes(down+up)}</span></div>`; }).join("") : `<div class="reason-detail">No adapter rate samples yet.</div>`);
     const processes = metricTargets("host_process_bytes_recv_rate");
     const processPanel = panel("Processes", processes.length ? processes.map(target => `<div class="adapter"><span>${esc(target.split(":").slice(2).join(":"))}</span><span class="adapter-rate">${bytes(Number(latest("host_process_bytes_recv_rate",target)?.value||0)+Number(latest("host_process_bytes_sent_rate",target)?.value||0))}</span></div>`).join("") : `<div class="reason-detail">Per-process network counters are unavailable on this platform or disabled in config.</div>`);
+    const managedNames = config.managed_hosts?.hosts || [];
+    const managedReported = metricTargets("managed_host_available");
+    const managedHosts = [...new Set([...managedNames, ...managedReported])];
+    const managed = panel("Managed Windows hosts · NIC traffic", managedHosts.length ? managedHosts.map(name => {
+      const available = Number(latest("managed_host_available", name)?.value || 0) > 0;
+      const downRows = series("managed_host_nic_bytes_recv_rate", name, 80);
+      const upRows = series("managed_host_nic_bytes_sent_rate", name, 80);
+      const down = Number(downRows.at(-1)?.value || 0), up = Number(upRows.at(-1)?.value || 0);
+      return `<div class="metric-block"><div class="metric-head"><span class="status-dot ${available ? "" : "down"}"></span><span>${esc(name)}</span><span class="probe-proto">${available ? "available" : "unavailable"}</span><div class="metric-stats"><span>down <strong>${bytes(down)}</strong></span><span>up <strong>${bytes(up)}</strong></span></div></div><div class="chartbox"><svg class="chart" viewBox="0 0 600 54" preserveAspectRatio="none"><path d="${svgPath(downRows,600,54,0)}" fill="none" stroke="#4af6c3" stroke-width="1.5" vector-effect="non-scaling-stroke"/><path d="${svgPath(upRows,600,54,0)}" fill="none" stroke="#d08c60" stroke-width="1.3" vector-effect="non-scaling-stroke"/></svg></div></div>`;
+    }).join("") : `<div class="reason-detail">Managed-host telemetry is disabled or has not reported yet.</div>`, `${managedHosts.length} configured/reported · SSH`);
+    const managedNote = `<section class="panel dashed"><p class="body-copy">Managed-host rates are cumulative adapter counters read over SSH. They include that device's LAN traffic and are <strong style="color:var(--text)">not total WAN throughput</strong>.</p></section>`;
     const speed = `<section class="panel dashed"><div class="panel-head"><h2 class="panel-title">Speedtest · capacity</h2><span class="chip disabled">⊘ needs write API</span></div><p class="body-copy">Scheduled speedtest is <strong style="color:${config.speedtest?.enabled ? "var(--green)" : "var(--amber)"}">${config.speedtest?.enabled ? "enabled" : "disabled"}</strong>. Capacity is not utilisation, so it is never stacked on the host-traffic axis.</p><button class="btn" disabled>enable speedtest</button></section>`;
-    return `<div class="screen">${unavailable}${host}<div class="grid-2">${adapters}${processPanel}</div>${speed}</div>`;
+    return `<div class="screen">${unavailable}${host}<div class="grid-2">${adapters}${processPanel}</div>${managed}${managedNote}${speed}</div>`;
   }
 
   function alertsScreen() {
@@ -321,6 +332,9 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
         "alerts.enabled":config.alerts?.enabled,"alerts.rules":`${config.alerts?.rules?.length || 0} rules`,
         "alerts.windows_toast":config.alerts?.windows_toast,"speedtest.enabled":config.speedtest?.enabled,
         "eero.enabled":config.eero?.enabled,"eero.token_configured":config.eero?.token_configured,
+        "managed_hosts.enabled":config.managed_hosts?.enabled,
+        "managed_hosts.interval_seconds":config.managed_hosts?.interval_seconds,
+        "managed_hosts.hosts":config.managed_hosts?.hosts || [],
       }],
     ];
     return `<div class="screen">${intro}<div class="settings-grid">${sections.map(([title,key,values]) => settingCard(title,key,values)).join("")}</div></div>`;

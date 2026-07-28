@@ -31,6 +31,7 @@ from netmon.collectors.eero_usage import EeroUsageCollector
 from netmon.collectors.host_nic import HostNicCollector
 from netmon.collectors.http_probe import HttpCollector
 from netmon.collectors.latency import LatencyCollector
+from netmon.collectors.managed_host import ManagedHostNicCollector
 from netmon.collectors.retention import RetentionCollector
 from netmon.collectors.speedtest import SpeedtestCollector
 from netmon.collectors.wan_status import WanStatusCollector
@@ -40,11 +41,13 @@ from netmon.outage import OutageCoordinator, OutageStateMachine
 from netmon.probes.arp import create_arp_probe, create_interface_probe
 from netmon.probes.dns import ResolverDnsProbe
 from netmon.probes.eero_cloud import EeroCloudProbe, HttpxEeroTransport
+from netmon.probes.eero_token import FileEeroTokenStore
 from netmon.probes.gateway import create_gateway_probe
 from netmon.probes.host_nic import PsutilHostNicProbe
 from netmon.probes.hostname import create_hostname_probe
 from netmon.probes.http import HttpxProbe
 from netmon.probes.icmp import create_icmp_probe
+from netmon.probes.managed_host import AsyncioCommandRunner, SshWindowsNicProbe
 from netmon.probes.oui import BundledOuiLookup
 from netmon.probes.speedtest import HttpxSpeedtestProbe
 from netmon.probes.traceroute import SystemTracerouteProbe
@@ -118,15 +121,36 @@ def _default_scheduler(settings: NetmonSettings, store: Store, clock: Clock) -> 
     if settings.speedtest.enabled:
         collectors.append(SpeedtestCollector(HttpxSpeedtestProbe(clock), clock, settings.speedtest))
     if settings.eero.enabled:
-        token = _read_token(settings.eero.token_path)
+        token_store = FileEeroTokenStore(settings.eero.token_path)
         collectors.append(
             EeroUsageCollector(
                 EeroCloudProbe(HttpxEeroTransport(str(settings.eero.base_url))),
-                token,
+                token_store.read(),
                 clock,
                 settings.eero,
+                token_store,
             )
         )
+    if settings.managed_hosts.enabled:
+        runner = AsyncioCommandRunner()
+        for host in settings.managed_hosts.hosts:
+            collectors.append(
+                ManagedHostNicCollector(
+                    SshWindowsNicProbe(
+                        runner,
+                        host.address,
+                        host.username,
+                        host.identity_file,
+                        port=host.port,
+                        timeout_seconds=host.timeout_seconds,
+                    ),
+                    clock,
+                    host.name,
+                    settings.managed_hosts.interval_seconds,
+                    host.adapter_name,
+                    host.expected_mac,
+                )
+            )
     collectors.append(RetentionCollector(store, clock, settings.retention))
     if settings.alerts.enabled:
         notifiers: list[Notifier] = [LogNotifier()]
@@ -321,7 +345,13 @@ def _dashboard_config(settings: NetmonSettings) -> dict[str, Any]:
         "eero": {
             "enabled": settings.eero.enabled,
             "interval_seconds": settings.eero.interval_seconds,
-            "token_configured": _read_token(settings.eero.token_path) is not None,
+            "network_id": settings.eero.network_id,
+            "token_configured": FileEeroTokenStore(settings.eero.token_path).read() is not None,
+        },
+        "managed_hosts": {
+            "enabled": settings.managed_hosts.enabled,
+            "interval_seconds": settings.managed_hosts.interval_seconds,
+            "hosts": [host.name for host in settings.managed_hosts.hosts],
         },
     }
 
@@ -361,11 +391,3 @@ def _unauthorized() -> JSONResponse:
         status_code=401,
         headers={"WWW-Authenticate": "Bearer"},
     )
-
-
-def _read_token(path: Path) -> str | None:
-    try:
-        token = path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-    return token or None

@@ -148,6 +148,9 @@ deliberately-ugly minimum from v0.2.
 - [x] Compile the complete API surface and the questions a user actually asks of it
 - [x] **Formal Claude Design review** of the whole interface at once, before anything is built
 - [x] Choose a direction from that review — explicitly, as a decision, not by accretion
+- [x] Opt-in managed-host telemetry: key-only SSH reads of cumulative Windows NIC counters for
+      explicitly configured devices, supporting per-device evidence without passive interception
+      or any v1.1 gateway enforcement capability
 - [ ] Build it: per-device drill-down, unified timeline across outages/joins/alerts, throughput
       charts scoped honestly to what is measured, on-demand diagnostics runner
 

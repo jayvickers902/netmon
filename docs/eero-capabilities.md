@@ -113,8 +113,15 @@ the same API the mobile app uses.
   verification code → POST `/2.2/login/verify` with the code → thereafter send
   `Cookie: s=<user_token>` on every request. **Tokens are long-lived**, so this is a one-time
   interactive step, not a per-poll login.
-- **Data:** `/2.2/networks/{id}` for network state, `/2.2/networks/{id}/devices` for the device
-  list *with instantaneous up/down rates per device*.
+- **Data:** the account response discovers accessible networks and their resource URLs; the
+  selected network's device resource carries instantaneous `usage.up_mbps` / `usage.down_mbps`
+  values. netmon follows those advertised URLs instead of constructing endpoints from guesses.
+- **Selection:** set `eero.network_id` when the account can access multiple networks. Automatic
+  selection is limited to the unambiguous single-network case; the login command prints the
+  available names and IDs after verification.
+- **Session lifetime:** netmon preserves the existing token when verification or refresh returns
+  no replacement, and persists a new token when refresh supplies one. Authentication failures
+  still fail soft rather than interrupting other collectors.
 - **Prior art:** `schmittx/home-assistant-eero` (actively maintained, HA 2025.2+),
   `fulviofreitas/eero-api`, `yepher/eeroMonitor`. All reverse-engineered; none endorsed by eero.
 
@@ -137,9 +144,13 @@ hand, and I am not going to create an account on your behalf.
   notice and no deprecation window.
 - **Cloud dependency in a LAN tool.** If your internet is down — precisely when netmon matters
   most — this collector goes dark. It must fail soft and must never block the scheduler.
-- **Rate limits are undocumented.** Poll conservatively (30–60s), never at the app's 5s cadence.
+- **Rate limits are undocumented.** Poll conservatively (30–60s); configuration enforces a
+  30-second minimum, never the app's 5s cadence.
 - **It puts your eero credentials in netmon's config.** Hence: separate account, admin-only,
   and the token stored rather than the password.
+- **Read-only by design.** Although the private API may expose control operations, netmon uses
+  only login/refresh and account, network, and device reads. It does not pause devices or alter
+  router configuration.
 
 ### There is also an *official* path
 

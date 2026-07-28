@@ -128,6 +128,7 @@ Use `/metrics` to inspect samples. The `source` field tells you where each value
 | `host_nic` | This machine's per-NIC and optional per-process counters from psutil |
 | `speedtest` | Opt-in link-capacity and latency tests; not utilisation |
 | `eero_cloud` | Opt-in cloud-reported per-device rates; unavailable during an internet outage |
+| `managed_host_ssh` | Opt-in SSH reads of a configured Windows host's NIC counters |
 
 The absence of a total-WAN counter is intentional. The eero 7 does not implement the UPnP byte
 counter service, and a passive LAN host cannot see other devices' traffic. See
@@ -151,12 +152,25 @@ misbehaving endpoint.
 
 ### eero per-device usage
 
-The collector is disabled by default and polls no faster than every 30 seconds. Set `enabled =
-true`, then complete the one-time token flow:
+The collector is disabled by default and polls no faster than every 30 seconds. Configure it
+deliberately:
+
+```toml
+[eero]
+enabled = true
+interval_seconds = 60
+network_id = "900001"  # required when the account can access more than one network
+```
+
+Then complete the one-time token flow:
 
 ```powershell
 uv run netmon eero-login
 ```
+
+After verification, the command lists the accessible network names and IDs. Copy the intended ID
+to `eero.network_id`. Leaving it unset is safe only for an account with exactly one network;
+netmon refuses to guess when more than one is available.
 
 The account must be a separate eero account created with an email address and password. Amazon
 SSO accounts cannot use this cloud API; invite the separate account to the network as an admin,
@@ -165,7 +179,47 @@ Only the long-lived token is stored at `eero.token_path`; the password is not pe
 
 This is a reverse-engineered, cloud-dependent source. It fails soft and records
 `eero_usage_available = 0` when the token is absent or the service is unavailable. It never
-contributes to outage classification. See [eero-capabilities.md](eero-capabilities.md).
+contributes to outage classification. Netmon attempts token refresh after an authentication
+failure and persists a replacement token when one is returned; if refresh fails, the poll remains
+unavailable and the scheduler continues. The integration is strictly read-only: it reads account,
+network, and device telemetry but does not change eero configuration. See
+[eero-capabilities.md](eero-capabilities.md).
+
+### Managed Windows-host NIC telemetry
+
+This opt-in collector reads adapter byte counters from Windows hosts that you administer. It is
+not passive interception and it does not provide a total-WAN figure: each adapter's cumulative
+bytes include LAN traffic to and from that device.
+
+Configure a separate least-privilege account and a dedicated SSH key on each target. First make
+one interactive SSH connection from the netmon service account to verify and record the host key;
+the collector uses key-only SSH with `StrictHostKeyChecking`, so it will not accept an unknown or
+changed host key during a scheduled poll.
+
+```toml
+[managed_hosts]
+enabled = true
+interval_seconds = 30
+
+[[managed_hosts.hosts]]
+name = "office-pc"
+address = "192.168.4.50"
+username = "netmon"
+identity_file = "C:/Users/netmon/.ssh/id_ed25519"
+adapter_name = "Ethernet" # optional when the host has one suitable adapter
+expected_mac = "aa:bb:cc:dd:ee:ff" # optional guard against selecting the wrong NIC
+```
+
+Host names are stable safe identifiers and must be unique. The dashboard receives only enabled
+state, interval, and host names; addresses, usernames, and private-key paths are never exposed.
+The collector fails soft: SSH authentication, trust, timeout, or remote-command errors record
+`managed_host_available = 0` and leave the scheduler and outage classification running.
+
+Metrics use target `<host name>` and source `managed_host_ssh`:
+
+- `managed_host_available`
+- `managed_host_nic_bytes_sent_rate`
+- `managed_host_nic_bytes_recv_rate`
 
 ## Troubleshooting
 
@@ -181,7 +235,17 @@ to the host's LAN address and router address, then restart netmon. The full inve
 Check that `[eero] enabled = true`, the token file exists at `token_path`, and the account is an
 email/password eero account rather than Amazon SSO. The collector also becomes unavailable when
 the internet or eero cloud is down; this is expected and does not indicate a local database
-failure. Inspect `/metrics` for the `eero_cloud` source and `eero_usage_available` value.
+failure. If the login command listed multiple networks, also confirm `network_id` matches the
+intended network. Inspect `/metrics` for the `eero_cloud` source and
+`eero_usage_available` value.
+
+### Managed host reports unavailable
+
+Confirm `[managed_hosts] enabled = true`, the host name resolves or address is reachable, the
+configured key is readable by the netmon service account, and the target's SSH host key is in that
+account's `known_hosts`. A changed host key is treated as unavailable on purpose; investigate it
+before replacing the trusted entry. Also check `adapter_name` and `expected_mac` against the
+target's active NIC. Inspect `/metrics?source=managed_host_ssh` for availability samples.
 
 ### The service does not start
 

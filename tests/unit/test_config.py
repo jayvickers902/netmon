@@ -37,3 +37,11 @@ def test_dangerous_phase_intervals_and_tiers_are_rejected():
         SpeedtestConfig(interval_seconds=899)
     with pytest.raises(ValidationError, match="ordered"):
         RetentionConfig(raw_days=30, rollup_1m_days=7, rollup_5m_days=365)
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [(None, None), ("", None), ("   ", None), ("  network-42  ", "network-42")],
+)
+def test_eero_network_id_is_normalized(configured, expected):
+    assert EeroConfig(network_id=configured).network_id == expected

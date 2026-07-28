@@ -1,1 +1,31 @@
-{"devices": [{"mac": "aa:bb", "up_rate": 3, "down_rate": 4}]}
+{
+  "meta": {
+    "code": 200,
+    "server_time": 1760000003
+  },
+  "data": [
+    {
+      "id": "device-1",
+      "mac": "AA:BB:CC:DD:EE:01",
+      "connected": true,
+      "usage": {
+        "up_mbps": 1.25,
+        "down_mbps": 8.5
+      }
+    },
+    {
+      "id": "device-2",
+      "mac": "AA:BB:CC:DD:EE:02",
+      "connected": false
+    },
+    {
+      "id": "device-3",
+      "mac": "AA:BB:CC:DD:EE:03",
+      "connected": true,
+      "usage": {
+        "up_mbps": 0,
+        "down_mbps": 0.004
+      }
+    }
+  ]
+}

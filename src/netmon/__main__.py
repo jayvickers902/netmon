@@ -13,6 +13,7 @@ from netmon.api.app import create_app
 from netmon.config import NetmonSettings
 from netmon.db import DatabaseBackupError, backup_database, restore_database
 from netmon.probes.eero_cloud import EeroCloudError, EeroCloudProbe, HttpxEeroTransport
+from netmon.probes.eero_token import FileEeroTokenStore
 from netmon.service import run_service
 
 
@@ -70,12 +71,20 @@ async def _eero_login(base_url: object, token_path: Path) -> None:
         login_token = await probe.login(identifier)
         code = await asyncio.to_thread(input, "verification code: ")
         token = await probe.verify(login_token, code)
+        networks = await probe.list_networks(token)
     except EeroCloudError as error:
         raise SystemExit(str(error)) from None
-    await asyncio.to_thread(token_path.parent.mkdir, parents=True, exist_ok=True)
-    await asyncio.to_thread(token_path.write_text, token + "\n", encoding="utf-8")
+    finally:
+        await probe.aclose()
+    await FileEeroTokenStore(token_path).save(token)
     del identifier, code
     print(f"eero token saved to {token_path}")
+    if networks:
+        print("available eero networks (set eero.network_id in netmon.toml):")
+        for network in networks:
+            print(f"  {network.name}: {network.id}")
+    else:
+        print("no eero networks were returned for this account")
 
 
 if __name__ == "__main__":

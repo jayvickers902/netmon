@@ -1,1 +1,9 @@
-{"user_token": "long-lived-token"}
+{
+  "meta": {
+    "code": 200,
+    "server_time": 1760000001
+  },
+  "data": {
+    "user_token": "long-lived-token"
+  }
+}

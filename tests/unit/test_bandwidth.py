@@ -9,7 +9,7 @@ from netmon.collectors.eero_usage import EeroUsageCollector
 from netmon.collectors.host_nic import HostNicCollector
 from netmon.collectors.speedtest import SpeedtestCollector
 from netmon.config import EeroConfig, HostNicConfig, SpeedtestConfig
-from netmon.probes.eero_cloud import EeroCloudError, EeroCloudProbe, EeroDeviceRate
+from netmon.probes.eero_cloud import EeroCloudError, EeroCloudProbe, EeroDeviceRate, EeroNetwork
 from netmon.probes.host_nic import NicCounters, ProcessCounters
 from netmon.probes.speedtest import SpeedtestResult
 
@@ -71,8 +71,9 @@ class FakeEeroProbe:
     def __init__(self, result: list[EeroDeviceRate] | Exception) -> None:
         self.result = result
 
-    async def device_rates(self, token: str) -> list[EeroDeviceRate]:
+    async def device_rates(self, token: str, network_id: str | None = None) -> list[EeroDeviceRate]:
         assert token == "secret-token"
+        assert network_id is None
         if isinstance(self.result, Exception):
             raise self.result
         return self.result
@@ -104,34 +105,105 @@ async def test_eero_malformed_response_is_unavailable(frozen_clock):
 
 
 class EeroFixtureTransport:
-    def __init__(self, responses: list[dict]) -> None:
+    def __init__(self, responses: list[dict[str, object]]) -> None:
         self.responses = iter(responses)
         self.calls: list[tuple[str, str, str | None]] = []
+        self.closed = False
 
-    async def request(self, method, path, payload=None, token=None):
+    async def request(
+        self,
+        method: str,
+        path: str,
+        payload: dict[str, str] | None = None,
+        token: str | None = None,
+    ) -> dict[str, object]:
         del payload
         self.calls.append((method, path, token))
         return next(self.responses)
 
+    async def aclose(self) -> None:
+        self.closed = True
+
 
 @pytest.mark.asyncio
-async def test_eero_fixture_protocol_login_verify_and_rates(fixture_dir):
-    names = ["eero_login.json", "eero_verify.json", "eero_networks.json", "eero_devices.json"]
+async def test_eero_fixture_protocol_login_verify_and_network_discovery(fixture_dir):
+    names = ["eero_login.json", "eero_verify.json", "eero_account.json"]
     responses = [json.loads((fixture_dir / name).read_text()) for name in names]
     transport = EeroFixtureTransport(responses)
     probe = EeroCloudProbe(transport)
     assert await probe.login("person@example.com") == "login-token"
     assert await probe.verify("login-token", "123456") == "long-lived-token"
-    rates = await probe.device_rates("long-lived-token")
-    assert rates == [EeroDeviceRate("aa:bb", 3, 4)]
+    assert await probe.list_networks("long-lived-token") == [
+        EeroNetwork("900001", "Home", "/2.2/networks/900001"),
+        EeroNetwork("900002", "Workshop", "/2.2/networks/900002"),
+    ]
     assert transport.calls[-1][2] == "long-lived-token"
 
 
 @pytest.mark.asyncio
-async def test_eero_fixture_malformed_schema_is_sanitized():
-    probe = EeroCloudProbe(EeroFixtureTransport([{"networks": []}]))
-    with pytest.raises(EeroCloudError, match="invalid"):
+async def test_eero_explicit_network_follows_resource_url_and_converts_mbps(fixture_dir):
+    responses = [
+        json.loads((fixture_dir / name).read_text())
+        for name in ("eero_account.json", "eero_network.json", "eero_devices.json")
+    ]
+    transport = EeroFixtureTransport(responses)
+    rates = await EeroCloudProbe(transport).device_rates("secret-token", "900001")
+    assert rates == [
+        EeroDeviceRate("aa:bb:cc:dd:ee:01", 156_250.0, 1_062_500.0),
+        EeroDeviceRate("aa:bb:cc:dd:ee:03", 0.0, 500.0),
+    ]
+    assert transport.calls[-1][1] == "/2.2/networks/900001/devices"
+
+
+@pytest.mark.asyncio
+async def test_eero_single_network_is_selected_automatically(fixture_dir):
+    account = json.loads((fixture_dir / "eero_account.json").read_text())
+    account["data"]["networks"]["data"] = account["data"]["networks"]["data"][:1]
+    network = json.loads((fixture_dir / "eero_network.json").read_text())
+    devices = json.loads((fixture_dir / "eero_devices.json").read_text())
+    rates = await EeroCloudProbe(EeroFixtureTransport([account, network, devices])).device_rates(
+        "secret-token"
+    )
+    assert len(rates) == 2
+
+
+@pytest.mark.asyncio
+async def test_eero_multiple_networks_require_explicit_selection(fixture_dir):
+    account = json.loads((fixture_dir / "eero_account.json").read_text())
+    probe = EeroCloudProbe(EeroFixtureTransport([account]))
+    with pytest.raises(EeroCloudError, match="network"):
         await probe.device_rates("secret-token")
+
+
+@pytest.mark.asyncio
+async def test_eero_verify_and_refresh_preserve_token_when_response_omits_one():
+    ok_without_token = {"meta": {"code": 200}, "data": {"verified": True}}
+    probe = EeroCloudProbe(EeroFixtureTransport([ok_without_token, ok_without_token]))
+    assert await probe.verify("login-token", "123456") == "login-token"
+    assert await probe.refresh("long-lived-token") == "long-lived-token"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "response, match",
+    [
+        ({"meta": {"code": 401, "error": "invalid token"}, "data": None}, "authentication"),
+        ({"meta": {"code": 200}, "data": "not-an-object"}, "invalid"),
+        ({"data": {}}, "invalid"),
+    ],
+)
+async def test_eero_meta_and_schema_failures_are_sanitized(response: dict[str, object], match: str):
+    probe = EeroCloudProbe(EeroFixtureTransport([response]))
+    with pytest.raises(EeroCloudError, match=match):
+        await probe.list_networks("secret-token")
+
+
+@pytest.mark.asyncio
+async def test_eero_probe_closes_injected_transport():
+    transport = EeroFixtureTransport([])
+    probe = EeroCloudProbe(transport)
+    await probe.aclose()
+    assert transport.closed
 
 
 @pytest.mark.asyncio
@@ -164,21 +236,46 @@ async def test_eero_success_path_tags_every_per_device_sample(frozen_clock):
 
 @pytest.mark.asyncio
 async def test_eero_skips_devices_without_rates_instead_of_failing_the_poll():
-    """One sleeping laptop must not blank per-device usage for the whole network."""
+    """Invalid usage from one client must not blank the whole network."""
     transport = EeroFixtureTransport(
         [
-            {"networks": [{"id": 1}]},
             {
-                "devices": [
-                    {"mac": "aa:bb", "up_rate": 3, "down_rate": 4},
-                    {"mac": "off:line", "connected": False},
-                    {"mac": "cc:dd", "up_rate": 1, "down_rate": 2},
-                ]
+                "meta": {"code": 200},
+                "data": {
+                    "networks": {
+                        "data": [
+                            {
+                                "id": "1",
+                                "name": "Home",
+                                "url": "/custom/network-resource",
+                            }
+                        ]
+                    }
+                },
+            },
+            {
+                "meta": {"code": 200},
+                "data": {"resources": {"devices": "/custom/client-resource"}},
+            },
+            {
+                "meta": {"code": 200},
+                "data": [
+                    {"mac": "aa:bb", "usage": {"up_mbps": 3, "down_mbps": 4}},
+                    {"mac": "missing", "usage": {}},
+                    {"mac": "string", "usage": {"up_mbps": "1", "down_mbps": 2}},
+                    {"mac": "negative", "usage": {"up_mbps": -1, "down_mbps": 2}},
+                    {"mac": "infinite", "usage": {"up_mbps": 1e309, "down_mbps": 2}},
+                    {"mac": "cc:dd", "usage": {"up_mbps": 1, "down_mbps": 2}},
+                ],
             },
         ]
     )
     rates = await EeroCloudProbe(transport).device_rates("secret-token")
-    assert rates == [EeroDeviceRate("aa:bb", 3, 4), EeroDeviceRate("cc:dd", 1, 2)]
+    assert rates == [
+        EeroDeviceRate("aa:bb", 375_000, 500_000),
+        EeroDeviceRate("cc:dd", 125_000, 250_000),
+    ]
+    assert transport.calls[-1][1] == "/custom/client-resource"
 
 
 class SteppingClock:

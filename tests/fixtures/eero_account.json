@@ -1,0 +1,28 @@
+{
+  "meta": {
+    "code": 200,
+    "server_time": 1760000002
+  },
+  "data": {
+    "networks": {
+      "data": [
+        {
+          "id": "900001",
+          "name": "Home",
+          "url": "/2.2/networks/900001",
+          "resources": {
+            "devices": "/2.2/networks/900001/devices"
+          }
+        },
+        {
+          "id": "900002",
+          "name": "Workshop",
+          "url": "/2.2/networks/900002",
+          "resources": {
+            "devices": "/2.2/networks/900002/devices"
+          }
+        }
+      ]
+    }
+  }
+}

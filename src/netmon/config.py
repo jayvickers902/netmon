@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import os
+import re
 import tomllib
 from pathlib import Path
 from typing import Any, ClassVar
@@ -104,6 +105,66 @@ class EeroConfig(BaseModel):
     interval_seconds: float = Field(default=60.0, ge=30.0)
     token_path: Path = Path("data/eero.token")
     base_url: HttpUrl = HttpUrl("https://api-user.e2ro.com")
+    network_id: str | None = None
+
+    @model_validator(mode="after")
+    def normalize_network_id(self) -> EeroConfig:
+        if self.network_id is not None:
+            self.network_id = self.network_id.strip() or None
+        return self
+
+
+class ManagedHostTargetConfig(BaseModel):
+    """SSH connection and adapter identity for one explicitly managed Windows host."""
+
+    name: str
+    address: str
+    username: str
+    identity_file: Path
+    port: int = Field(default=22, ge=1, le=65535)
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    adapter_name: str | None = None
+    expected_mac: str | None = None
+
+    @model_validator(mode="after")
+    def normalize_identity(self) -> ManagedHostTargetConfig:
+        self.name = self.name.strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", self.name):
+            raise ValueError("managed host name must be a safe nonempty identifier")
+        for field_name in ("address", "username"):
+            value = getattr(self, field_name).strip()
+            if not value or any(character.isspace() for character in value):
+                raise ValueError(
+                    f"managed host {field_name} must be nonblank and contain no whitespace"
+                )
+            setattr(self, field_name, value)
+        if self.adapter_name is not None:
+            self.adapter_name = self.adapter_name.strip() or None
+        if self.expected_mac is not None:
+            if not re.fullmatch(r"[0-9a-fA-F:-]+", self.expected_mac):
+                raise ValueError("managed host expected_mac must be a MAC address")
+            compact = re.sub(r"[^0-9a-fA-F]", "", self.expected_mac)
+            if len(compact) != 12:
+                raise ValueError("managed host expected_mac must be a MAC address")
+            self.expected_mac = ":".join(
+                compact[index : index + 2].lower() for index in range(0, 12, 2)
+            )
+        return self
+
+
+class ManagedHostsConfig(BaseModel):
+    enabled: bool = False
+    interval_seconds: float = Field(default=30.0, ge=5.0)
+    hosts: list[ManagedHostTargetConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_hosts(self) -> ManagedHostsConfig:
+        names = [host.name for host in self.hosts]
+        if len(names) != len(set(names)):
+            raise ValueError("managed host names must be unique")
+        if self.enabled and not self.hosts:
+            raise ValueError("managed_hosts.hosts must contain at least one host when enabled")
+        return self
 
 
 class RetentionConfig(BaseModel):
@@ -186,6 +247,7 @@ class NetmonSettings(BaseSettings):
     host_nic: HostNicConfig = Field(default_factory=HostNicConfig)
     speedtest: SpeedtestConfig = Field(default_factory=SpeedtestConfig)
     eero: EeroConfig = Field(default_factory=EeroConfig)
+    managed_hosts: ManagedHostsConfig = Field(default_factory=ManagedHostsConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
     alerts: AlertsConfig = Field(default_factory=AlertsConfig)
     throttle: ThrottleConfig = Field(default_factory=ThrottleConfig)
