@@ -12,11 +12,14 @@ jobs:
     # never shipped, and would leave the ctypes paths that actually run untested.
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v5
+      # All three pinned to v7, the first major of each that runs on Node 24.
+      # setup-uv publishes no floating v8/v9 tag — only exact versions — so v7 is
+      # the newest tag that tracks patches here, despite 9.x existing.
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: uv sync --dev
