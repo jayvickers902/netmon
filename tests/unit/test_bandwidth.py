@@ -9,7 +9,14 @@ from netmon.collectors.eero_usage import EeroUsageCollector
 from netmon.collectors.host_nic import HostNicCollector
 from netmon.collectors.speedtest import SpeedtestCollector
 from netmon.config import EeroConfig, HostNicConfig, SpeedtestConfig
-from netmon.probes.eero_cloud import EeroCloudError, EeroCloudProbe, EeroDeviceRate, EeroNetwork
+from netmon.probes.eero_cloud import (
+    EeroCloudError,
+    EeroCloudProbe,
+    EeroDevice,
+    EeroDeviceRate,
+    EeroNetwork,
+    EeroNetworkSnapshot,
+)
 from netmon.probes.host_nic import NicCounters, ProcessCounters
 from netmon.probes.speedtest import SpeedtestResult
 
@@ -71,12 +78,22 @@ class FakeEeroProbe:
     def __init__(self, result: list[EeroDeviceRate] | Exception) -> None:
         self.result = result
 
-    async def device_rates(self, token: str, network_id: str | None = None) -> list[EeroDeviceRate]:
+    async def network_snapshot(
+        self, token: str, network_id: str | None = None
+    ) -> EeroNetworkSnapshot:
         assert token == "secret-token"
         assert network_id is None
         if isinstance(self.result, Exception):
             raise self.result
-        return self.result
+        devices = [
+            EeroDevice(
+                rate.device_id,
+                upload_bytes_per_second=rate.upload_bytes_per_second,
+                download_bytes_per_second=rate.download_bytes_per_second,
+            )
+            for rate in self.result
+        ]
+        return EeroNetworkSnapshot("fake-network", devices, None)
 
 
 @pytest.mark.asyncio

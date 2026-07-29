@@ -12,6 +12,7 @@ from typing import Any
 
 from netmon.config import RetentionConfig
 from netmon.models import DeviceObservation, Event, Investigation, Sample
+from netmon.probes.eero_cloud import EeroDevice
 
 from .migrations import migrate
 
@@ -145,6 +146,22 @@ class Store:
                         {"missed_sweeps": misses},
                     )
 
+    def record_eero_devices(self, devices: Iterable[EeroDevice]) -> None:
+        """Update names/connection detail for devices discovery already created.
+
+        Unknown MACs are left alone: discovery owns row creation, this only enriches
+        rows that already exist. COALESCE keeps a stored value when this cycle's device
+        omitted it, so one missing field doesn't erase previously learned identity.
+        """
+        with self.connection() as connection:
+            for device in devices:
+                connection.execute(
+                    "UPDATE device SET eero_name=COALESCE(?, eero_name), "
+                    "connection_type=COALESCE(?, connection_type), "
+                    "eero_node=COALESCE(?, eero_node) WHERE mac=?",
+                    (device.name, device.connection_type, device.node, device.device_id.lower()),
+                )
+
     @staticmethod
     def _event(
         connection: sqlite3.Connection,
@@ -201,6 +218,9 @@ class Store:
             "is_tracked": bool(row["is_tracked"]),
             "online": bool(row["is_online"]),
             "missed_sweeps": row["missed_sweeps"],
+            "eero_name": row["eero_name"],
+            "connection_type": row["connection_type"],
+            "eero_node": row["eero_node"],
             "ips": [dict(item) for item in ips],
         }
 

@@ -1,0 +1,24 @@
+{
+  "meta": {
+    "code": 200,
+    "server_time": 1760000004
+  },
+  "data": [
+    {
+      "location": "Living Room",
+      "model": "eero Pro 6",
+      "serial": "SN001",
+      "status": "green",
+      "connected_clients_count": 12,
+      "url": "/2.2/eeros/SN001"
+    },
+    {
+      "location": "Kitchen",
+      "model": "eero Beacon",
+      "serial": "SN002",
+      "status": "red",
+      "connected_clients_count": 3,
+      "url": "/2.2/eeros/SN002"
+    }
+  ]
+}

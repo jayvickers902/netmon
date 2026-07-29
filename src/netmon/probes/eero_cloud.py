@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -40,6 +42,49 @@ class EeroNetwork:
     id: str
     name: str
     resource_url: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EeroDevice:
+    """Full per-device info; every field but ``device_id`` is best-effort."""
+
+    device_id: str
+    name: str | None = None
+    connection_type: str | None = None
+    signal_dbm: float | None = None
+    band: str | None = None
+    node: str | None = None
+    ip: str | None = None
+    connected: bool | None = None
+    upload_bytes_per_second: float | None = None
+    download_bytes_per_second: float | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EeroNode:
+    location: str | None = None
+    serial: str | None = None
+    model: str | None = None
+    status: str | None = None
+    connected_clients: int | None = None
+
+    @property
+    def target(self) -> str | None:
+        return self.location or self.serial
+
+
+@dataclass(frozen=True, slots=True)
+class EeroSpeedTest:
+    measured_at: datetime
+    upload_mbps: float
+    download_mbps: float
+
+
+@dataclass(frozen=True, slots=True)
+class EeroNetworkSnapshot:
+    network_id: str
+    devices: list[EeroDevice]
+    speed: EeroSpeedTest | None
 
 
 class EeroTransport(Protocol):
@@ -181,6 +226,22 @@ class EeroCloudProbe:
         return networks
 
     async def device_rates(self, token: str, network_id: str | None = None) -> list[EeroDeviceRate]:
+        """Backwards-compatible view over :meth:`network_snapshot`: rate pairs only."""
+        snapshot = await self.network_snapshot(token, network_id)
+        return [
+            EeroDeviceRate(
+                device.device_id,
+                device.upload_bytes_per_second,
+                device.download_bytes_per_second,
+            )
+            for device in snapshot.devices
+            if device.upload_bytes_per_second is not None
+            and device.download_bytes_per_second is not None
+        ]
+
+    async def network_snapshot(
+        self, token: str, network_id: str | None = None
+    ) -> EeroNetworkSnapshot:
         networks = await self.list_networks(token)
         selected_network: EeroNetwork | None
         if network_id is None:
@@ -195,10 +256,12 @@ class EeroCloudProbe:
             raise EeroCloudError("configured eero network was not found")
 
         device_path = f"/2.2/networks/{selected_network.id}/devices?thread=true"
+        speed: EeroSpeedTest | None = None
         if selected_network.resource_url is not None:
             network_response = await self._request(
                 "GET", selected_network.resource_url, token=token
             )
+            speed = _parse_speed_test(network_response.get("speed"))
             devices_reference = network_response.get("devices")
             if devices_reference is None:
                 resources = network_response.get("resources")
@@ -209,11 +272,15 @@ class EeroCloudProbe:
                 if resource is not None:
                     device_path = resource
                 elif isinstance(devices_reference.get("data"), list):
-                    return _device_rates(devices_reference["data"])
+                    return EeroNetworkSnapshot(
+                        selected_network.id, _parse_devices(devices_reference["data"]), speed
+                    )
             elif isinstance(devices_reference, str) and devices_reference:
                 device_path = devices_reference
             elif isinstance(devices_reference, list):
-                return _device_rates(devices_reference)
+                return EeroNetworkSnapshot(
+                    selected_network.id, _parse_devices(devices_reference), speed
+                )
 
         devices = await self._request("GET", device_path, token=token)
         device_list: object = devices.get("devices", devices)
@@ -221,7 +288,18 @@ class EeroCloudProbe:
             device_list = device_list.get("data")
         if not isinstance(device_list, list):
             raise EeroSchemaError("eero cloud device response was invalid")
-        return _device_rates(device_list)
+        return EeroNetworkSnapshot(selected_network.id, _parse_devices(device_list), speed)
+
+    async def node_health(self, token: str, network_id: str) -> list[EeroNode]:
+        # A single direct GET; unlike devices, node status is always addressable by
+        # network_id so no resource_url indirection hop is needed.
+        response = await self._request("GET", f"/2.2/networks/{network_id}/eeros", token=token)
+        node_list: object = response.get("eeros", response)
+        if isinstance(node_list, dict):
+            node_list = node_list.get("data")
+        if not isinstance(node_list, list):
+            raise EeroSchemaError("eero cloud node response was invalid")
+        return _parse_nodes(node_list)
 
     async def _request(
         self,
@@ -289,29 +367,163 @@ def _id_from_url(resource_url: str | None) -> str | None:
     return candidate or None
 
 
-def _device_rates(device_list: list[object]) -> list[EeroDeviceRate]:
-    result: list[EeroDeviceRate] = []
+def _parse_devices(device_list: list[object]) -> list[EeroDevice]:
+    result: list[EeroDevice] = []
     for device in device_list:
         if not isinstance(device, dict):
             raise EeroSchemaError("eero cloud device response was invalid")
-        device_id = _device_identifier(device)
-        usage = device.get("usage")
-        if device_id is None:
-            continue
-        if not isinstance(usage, dict):
-            continue
-        upload = _non_negative_number(usage.get("up_mbps"))
-        download = _non_negative_number(usage.get("down_mbps"))
-        if upload is None or download is None:
-            continue
+        parsed = _parse_device(device)
+        if parsed is not None:
+            result.append(parsed)
+    return result
+
+
+def _parse_device(device: dict[str, Any]) -> EeroDevice | None:
+    device_id = _device_identifier(device)
+    if device_id is None:
+        return None
+    usage = device.get("usage")
+    return EeroDevice(
+        device_id=device_id,
+        name=_parse_name(device),
+        connection_type=_optional_str(device.get("connection_type")),
+        signal_dbm=_parse_signal_dbm(device.get("connectivity")),
+        band=_parse_band(device.get("interface")),
+        node=_parse_node_location(device.get("source")),
+        ip=_optional_str(device.get("ip")),
+        connected=device.get("connected") if isinstance(device.get("connected"), bool) else None,
+        upload_bytes_per_second=_parse_rate_bytes(usage, "up_mbps"),
+        download_bytes_per_second=_parse_rate_bytes(usage, "down_mbps"),
+    )
+
+
+def _parse_name(device: dict[str, Any]) -> str | None:
+    for key in ("nickname", "display_name", "hostname"):
+        value = _optional_str(device.get(key))
+        if value is not None:
+            return value
+    return None
+
+
+def _optional_str(value: object) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+_SIGNAL_NUMBER_RE = re.compile(r"-?\d+(?:\.\d+)?")
+
+
+def _parse_signal_dbm(connectivity: object) -> float | None:
+    if not isinstance(connectivity, dict):
+        return None
+    signal = connectivity.get("signal")
+    if not isinstance(signal, str):
+        return None
+    match = _SIGNAL_NUMBER_RE.search(signal)
+    if match is None:
+        return None
+    try:
+        return float(match.group())
+    except ValueError:
+        return None
+
+
+def _parse_band(interface: object) -> str | None:
+    if not isinstance(interface, dict):
+        return None
+    frequency = interface.get("frequency")
+    if isinstance(frequency, bool) or not isinstance(frequency, (int, float)):
+        return None
+    if not math.isfinite(frequency):
+        return None
+    unit = _optional_str(interface.get("frequency_unit"))
+    if unit is None:
+        return None
+    number = int(frequency) if float(frequency).is_integer() else frequency
+    return f"{number} {unit}"
+
+
+def _parse_node_location(source: object) -> str | None:
+    if not isinstance(source, dict):
+        return None
+    return _optional_str(source.get("location"))
+
+
+def _parse_rate_bytes(usage: object, key: str) -> float | None:
+    if not isinstance(usage, dict):
+        return None
+    number = _non_negative_number(usage.get(key))
+    if number is None:
+        return None
+    return number * 125_000.0
+
+
+def _parse_nodes(node_list: list[object]) -> list[EeroNode]:
+    result: list[EeroNode] = []
+    for node in node_list:
+        if not isinstance(node, dict):
+            raise EeroSchemaError("eero cloud node response was invalid")
+        clients = node.get("connected_clients_count")
+        client_count = (
+            int(clients)
+            if isinstance(clients, (int, float)) and not isinstance(clients, bool)
+            else None
+        )
         result.append(
-            EeroDeviceRate(
-                device_id,
-                upload * 125_000.0,
-                download * 125_000.0,
+            EeroNode(
+                location=_optional_str(node.get("location")),
+                serial=_optional_str(node.get("serial")),
+                model=_optional_str(node.get("model")),
+                status=_optional_str(node.get("status")),
+                connected_clients=client_count,
             )
         )
     return result
+
+
+_SPEED_UNITS_TO_MBPS = {"bps": 1e-6, "kbps": 1e-3, "mbps": 1.0, "gbps": 1_000.0}
+
+
+def _parse_speed_test(value: object) -> EeroSpeedTest | None:
+    if not isinstance(value, dict):
+        return None
+    measured_at = _parse_iso8601(value.get("date"))
+    if measured_at is None:
+        return None
+    upload_mbps = _parse_speed_leg(value.get("up"))
+    download_mbps = _parse_speed_leg(value.get("down"))
+    if upload_mbps is None or download_mbps is None:
+        return None
+    return EeroSpeedTest(measured_at, upload_mbps, download_mbps)
+
+
+def _parse_speed_leg(leg: object) -> float | None:
+    if not isinstance(leg, dict):
+        return None
+    number = _non_negative_number(leg.get("value"))
+    if number is None:
+        return None
+    unit = _optional_str(leg.get("units"))
+    if unit is None:
+        return None
+    factor = _SPEED_UNITS_TO_MBPS.get(unit.lower())
+    if factor is None:
+        return None
+    return number * factor
+
+
+def _parse_iso8601(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
 
 
 def _device_identifier(device: dict[str, Any]) -> str | None:

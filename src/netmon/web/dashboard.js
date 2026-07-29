@@ -133,6 +133,13 @@
     </div>`;
   };
   const metricTargets = kind => [...new Set(state.metrics.filter(row => row.kind === kind).map(row => row.target))];
+  // MAC-keyed samples (e.g. eero_device_upload_rate) carry no name of their own; look one up
+  // from the already-fetched device list rather than showing the bare MAC.
+  const deviceLabelFor = mac => {
+    const normalized = String(mac).toLowerCase();
+    const device = state.devices.find(item => String(item.mac || "").toLowerCase() === normalized);
+    return device?.label || device?.eero_name || device?.hostname || device?.vendor || mac;
+  };
 
   function healthView() {
     const status = state.status || {verdict:"unknown", open:false, targets:{}, wan:null};
@@ -301,7 +308,7 @@
     const editing = state.editingDeviceId === device.id;
     const identity = editing
       ? `<div><form class="inventory-label-form" data-label-form="${device.id}"><input class="label-input" name="label" maxlength="120" value="${esc(device.label || "")}" placeholder="Name this device" aria-label="Rename ${esc(device.label || device.mac)}" data-inline-label="${device.id}"><button class="btn" type="submit">save</button><button class="btn quiet" type="button" data-label-cancel>cancel</button></form><div class="device-meta">${esc(device.mac)} · ${esc(device.hostname || "no hostname")} · leave blank to clear</div></div>`
-      : `<div><div class="device-name">${esc(device.label || device.hostname || device.vendor || "Unknown device")}</div><div class="device-meta">${esc(device.mac)} · ${esc(device.hostname || "no hostname")} · ${esc(tag)}</div></div>`;
+      : `<div><div class="device-name">${esc(device.label || device.eero_name || device.hostname || device.vendor || "Unknown device")}</div><div class="device-meta">${esc(device.mac)} · ${esc(device.hostname || "no hostname")} · ${esc(tag)}</div></div>`;
     const action = editing
       ? ""
       : `<button class="chip tone label-button" style="--tone:${tone}" type="button" data-label-device="${device.id}" aria-label="${device.label ? `Rename ${esc(device.label)}` : `Label ${esc(device.mac)}`}">${device.label ? "rename" : "add label"}</button>`;
@@ -380,11 +387,7 @@
       target,
       row: latest("eero_device_upload_rate", target),
     })).filter(item => item.row && finite(item.row.value)).sort((left,right) => Number(right.row.value) - Number(left.row.value));
-    const deviceName = target => {
-      const normalized = String(target).toLowerCase();
-      const device = state.devices.find(item => String(item.mac || "").toLowerCase() === normalized);
-      return device?.label || device?.hostname || device?.vendor || target;
-    };
+    const deviceName = deviceLabelFor;
     let uploaderBody = `<div class="reason-detail">eero cloud usage is disabled or has not completed a poll.</div>`;
     if (eeroAvailable && Number(eeroAvailable.value) === 0) {
       uploaderBody = `<div class="reason-detail">eero cloud usage is currently unavailable. Existing device rates are not shown as live.</div>`;
@@ -512,7 +515,7 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
       const rows = upload.filter(row => row.target === target);
       return {target, value: Number(rows.at(-1)?.value)};
     }).sort((a,b) => (finite(b.value) ? b.value : -1) - (finite(a.value) ? a.value : -1));
-    const deviceList = devices.length ? devices.map(item => `<div class="adapter"><span class="status-dot"></span><span>${esc(item.target)}<div class="stat-note">current eero upload rate</div></span><span class="adapter-rate">${bytes(item.value)}</span></div>`).join("") : `<div class="reason-detail">No per-device upload samples yet. eero data is allowed to fail soft.</div>`;
+    const deviceList = devices.length ? devices.map(item => `<div class="adapter"><span class="status-dot"></span><span>${esc(deviceLabelFor(item.target))}<div class="stat-note">${esc(item.target)} · current eero upload rate</div></span><span class="adapter-rate">${bytes(item.value)}</span></div>`).join("") : `<div class="reason-detail">No per-device upload samples yet. eero data is allowed to fail soft.</div>`;
     return `<div class="screen">${panel("Investigation running", `<div class="grid-3"><div class="stat"><div class="stat-label">time remaining</div><div class="stat-value" style="color:var(--mint)">${duration(remaining)}</div><div class="stat-note">watch window · ${duration(finite(ends - started) ? ends - started : null)}</div></div><div class="stat"><div class="stat-label">uplink reference</div><div class="stat-value">${capacity === null ? "—" : fmt(capacity / 1000000, 1)}<span class="unit"> Mbps</span></div><div class="stat-note">configured capacity</div></div><div class="stat"><div class="stat-label">sampling</div><div class="stat-value">burst</div><div class="stat-note">speedtest paused while active</div></div></div><p class="body-copy">Diagnostic collectors are polling faster, scheduled speedtest is paused, and this screen is watching the chosen window. Total upload is estimated from per-device eero rates, not measured directly at the WAN.</p><button class="btn" type="button" data-investigation-stop="${esc(active?.id)}">Stop now</button>`, `started ${stamp(started)}`)}
       ${panel("Internet RTT", latency.length ? investigationChart(latency, "#d08c60", "external RTT · ms") : `<div class="reason-detail">No internet RTT samples in this window yet.</div>`)}
       ${panel("Estimated total upload", investigationChart(totalUpload, "#4af6c3", `sum of eero device rates${capacity === null ? "" : " · amber = " + fmt(capacity / 1000000, 1) + " Mbps capacity"}`, capacity), "estimate · capacity reference")}

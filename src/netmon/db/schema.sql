@@ -8,7 +8,10 @@ CREATE TABLE IF NOT EXISTS device (
     label TEXT,
     is_tracked INTEGER NOT NULL DEFAULT 1,
     missed_sweeps INTEGER NOT NULL DEFAULT 0,
-    is_online INTEGER NOT NULL DEFAULT 1
+    is_online INTEGER NOT NULL DEFAULT 1,
+    eero_name TEXT,
+    connection_type TEXT,
+    eero_node TEXT
 );
 
 CREATE TABLE IF NOT EXISTS device_ip (

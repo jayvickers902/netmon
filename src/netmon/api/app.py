@@ -217,6 +217,7 @@ def _default_scheduler(
                 token_store,
                 investigation_state,
                 burst.eero if investigation_state else None,
+                device_sink=store.record_eero_devices,
             )
         )
     if settings.managed_hosts.enabled:

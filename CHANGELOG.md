@@ -18,6 +18,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Richer eero cloud device telemetry, still opt-in and soft-failing behind `[eero]`: per-device
+  name (preferring nickname, then display name, then hostname), connection type, parsed
+  wireless signal (`eero_device_rssi`), band, attached node, IP, and connected state. Names and
+  connection detail are persisted to new nullable `device.eero_name`, `device.connection_type`,
+  and `device.eero_node` columns (forward-only migration, existing rows preserved; unknown MACs
+  are never used to create device rows). One additional per-cycle GET reports eero node health
+  (`eero_node_online`, `eero_node_clients`); a failure there only skips node samples rather than
+  the whole poll. eero-run speed tests ride the network response already fetched for devices and
+  are emitted once per new measurement as `eero_speedtest_upload_rate` /
+  `eero_speedtest_download_rate`, deduplicated by measurement date. The dashboard device list and
+  investigation per-device upload rows now prefer the eero name over hostname/vendor.
 - Whole-house estimated upload tracking now sums successfully reported eero device rates with
   explicit cloud provenance. The bandwidth dashboard shows current/peak upload, the configured
   uplink-capacity reference, and ranked live uploaders; the example config documents a sustained

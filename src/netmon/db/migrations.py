@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from importlib.resources import files
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 
 def migrate(connection: sqlite3.Connection) -> None:
@@ -78,4 +78,14 @@ def migrate(connection: sqlite3.Connection) -> None:
             "ON investigation (status) WHERE status = 'running';"
         )
         connection.execute("INSERT INTO schema_migrations(version) VALUES (3)")
+    if 4 not in applied:
+        device_table = connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='device'"
+        ).fetchone()
+        if device_table is not None:
+            columns = {row[1] for row in connection.execute("PRAGMA table_info(device)").fetchall()}
+            for column in ("eero_name", "connection_type", "eero_node"):
+                if column not in columns:
+                    connection.execute(f"ALTER TABLE device ADD COLUMN {column} TEXT")
+        connection.execute("INSERT INTO schema_migrations(version) VALUES (4)")
     connection.commit()

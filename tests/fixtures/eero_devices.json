@@ -7,6 +7,12 @@
     {
       "id": "device-1",
       "mac": "AA:BB:CC:DD:EE:01",
+      "nickname": "Living Room TV",
+      "connection_type": "wired",
+      "ip": "192.168.1.50",
+      "source": {
+        "location": "Living Room eero"
+      },
       "connected": true,
       "usage": {
         "up_mbps": 1.25,
@@ -16,11 +22,29 @@
     {
       "id": "device-2",
       "mac": "AA:BB:CC:DD:EE:02",
+      "hostname": "guest-phone",
+      "connection_type": "wireless",
+      "connectivity": {
+        "signal": "junk"
+      },
       "connected": false
     },
     {
       "id": "device-3",
       "mac": "AA:BB:CC:DD:EE:03",
+      "display_name": "Kitchen Sensor",
+      "connection_type": "wireless",
+      "connectivity": {
+        "signal": "-61 dBm"
+      },
+      "interface": {
+        "frequency": 5,
+        "frequency_unit": "GHz"
+      },
+      "source": {
+        "location": "Kitchen eero"
+      },
+      "ip": "192.168.1.55",
       "connected": true,
       "usage": {
         "up_mbps": 0,

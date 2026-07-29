@@ -118,7 +118,7 @@ def test_v3_migration_preserves_existing_rows(tmp_path):
         assert connection.execute("SELECT COUNT(*) FROM device").fetchone()[0] == device_count
         assert connection.execute(
             "SELECT version FROM schema_migrations ORDER BY version"
-        ).fetchall() == [(1,), (2,), (3,)]
+        ).fetchall() == [(1,), (2,), (3,), (4,)]
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE type='table' AND name='investigation'"
         ).fetchone() == ("investigation",)
