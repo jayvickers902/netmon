@@ -76,8 +76,15 @@ The troubleshooting payoff. This is the phase that earns the tool its keep.
 
 The UPnP spike came back negative: the eero 7 advertises `WANCommonInterfaceConfig` but
 implements none of it — `GetTotalBytesSent`/`GetTotalBytesReceived` are not declared and
-every action on that service returns HTTP 500. **Total WAN throughput has no local source
-on the current topology.** Full detail in `docs/spike-upnp.md`.
+every action on that service returns HTTP 500. A later Hitron CODA survey found an independent
+local source: its `dsoctets` counters provide verified **downstream** total WAN throughput at
+the modem, pre-NAT, including wireless devices. **Upstream remains unsourced**: the modem
+exposes no upstream octet counter. Full detail is in `docs/hitron-capabilities.md` and the
+UPnP history remains in `docs/spike-upnp.md`.
+
+The discovery weakens but does not remove the case for the v1.1 gateway. A gateway would still
+buy upstream accounting, exact per-device attribution, and enforcement, none of which the
+current topology provides.
 
 The eero capability survey (`docs/eero-capabilities.md`) then reopened one option that the
 earlier roadmap had rejected. Per-device usage is **not** an eero Plus feature — live per-device
@@ -112,6 +119,8 @@ non-Amazon eero account), so it ships **off by default**.
 Rejected sources, recorded so they are not re-litigated:
 
 - **UPnP byte counters** — not implemented by the eero. Re-open only if firmware adds them
+- **Hitron upstream byte counters** — `usinfo.asp` exposes no octet counter. Upstream throughput
+  remains unavailable until a gateway or another source is introduced
 - **SNMP** — port 161 closed; not supported on any eero model
 - **Local management API** — none exists. Port 80 serves a redirect to `blocked.eero.com`,
   not an admin UI. Confirmed by direct probe, not assumed
@@ -200,8 +209,9 @@ implementation waits on a hardware decision.
   other devices' frames to us; no amount of code changes that. Two paths exist and both are
   on the roadmap: the eero cloud API (v0.4, opt-in, cloud-dependent) and nftables counters on
   a gateway (v1.1, local and exact).
-- **Total WAN throughput** on the current topology. The eero implements no byte counters and
-  offers no local management API. Resolved by the v1.1 gateway decision.
+- **Upstream WAN throughput** on the current topology. The Hitron supplies downstream
+  `dsoctets`, but no upstream octet counter. A gateway remains the v1.1 path to upstream
+  accounting as well as per-device attribution and enforcement.
 - **Traffic shaping on the current topology.** There is no enforcement point. See
   `docs/spike-gateway.md` §5.
 - Deep packet inspection or content logging.
@@ -209,13 +219,16 @@ implementation waits on a hardware decision.
 
 ## Hardware context
 
-The network is an **eero 7 mesh** (dual-band BE5000, 2× 2.5GbE ports per unit), not the
-ISP-provided router originally assumed. Surveyed in full in `docs/eero-capabilities.md`.
+The network is a **Hitron CODA modem in bridge mode** feeding an **eero 7 mesh** (dual-band
+BE5000, 2× 2.5GbE ports per unit), not the ISP-provided router originally assumed. The eero
+holds the public WAN IP directly; this topology is not behind CGNAT. Surveyed in full in
+`docs/eero-capabilities.md` and `docs/hitron-capabilities.md`.
 Confirmed by direct probe rather than assumption: no SSH (22 closed), no SNMP (161 closed),
 **no local management API of any kind** — port 80 returns a `303` redirect to
 `blocked.eero.com`, which is the content-filter block page, not an admin interface. What is
-open locally is DNS (53) and SSDP (1900). UPnP `WANIPConnection` is therefore netmon's only
-local router-derived signal, and v0.3 uses it.
+open locally is DNS (53) and SSDP (1900); the bridged Hitron is also reachable at
+`192.168.100.1` and exposes unauthenticated DOCSIS JSON. UPnP `WANIPConnection` remains the eero
+WAN signal, while the Hitron supplies an independent modem uptime signal and downstream counters.
 
 Three things follow:
 

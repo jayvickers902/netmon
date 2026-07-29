@@ -61,6 +61,13 @@ interval_seconds = 30
 # gateway = "192.168.4.1"
 # lan_ip = "192.168.4.143"
 
+[hitron]
+# Read-only DOCSIS status from the bridged Hitron modem.
+enabled = true
+interval_seconds = 30
+base_url = "http://192.168.100.1"
+timeout_seconds = 5
+
 [speedtest]
 # Saturates the link while running — keep this infrequent.
 enabled = false
@@ -144,6 +151,8 @@ wan = 10.0
 host_nic = 2.0
 # The eero endpoint is undocumented and unrate-limited; 30 seconds is a project non-negotiable.
 eero = 30.0
+# The Hitron is an embedded modem whose day job is keeping the house online; keep this gentle.
+hitron = 30.0
 # SSH round-trips to Windows need headroom; do not burst this below five seconds.
 managed_hosts = 10.0
 

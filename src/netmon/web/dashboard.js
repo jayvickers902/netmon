@@ -55,6 +55,10 @@
     const rows = state.metrics.filter(row => row.kind === kind && (!target || row.target === target));
     return rows.at(-1);
   };
+  const hitronSeries = (kind, target) => state.metrics.filter(row =>
+    row.source === "hitron" && row.kind === kind && (!target || row.target === target) && finite(row.value)
+  );
+  const latestHitron = (kind, target) => hitronSeries(kind, target).at(-1);
   const series = (kind, target, limit = 180) =>
     state.metrics.filter(row => row.kind === kind && (!target || row.target === target)).slice(-limit);
   const percentile = (rows, p) => {
@@ -268,7 +272,34 @@
     const http = panel("HTTP probe", httpTarget ? `<div style="display:flex;align-items:baseline;gap:8px"><span class="big-value">${fmt(httpValue,0)}</span><span class="unit">ms ttfb</span><span class="chip tone push" style="--tone:${code >= 200 && code < 400 ? "#3fb950" : "#f4584f"}">${fmt(code,0)}</span></div><div class="reason-detail">${esc(httpTarget)}</div><div class="chartbox"><svg class="chart" viewBox="0 0 600 80" preserveAspectRatio="none"><path d="${svgPath(httpRows,600,80)}" fill="none" stroke="#4af6c3" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg></div><div class="metric-stats" style="margin-top:9px"><span>min <strong>${fmt(percentile(httpRows,0))}</strong></span><span>p95 <strong>${fmt(percentile(httpRows,.95))}</strong></span></div>` : `<div class="reason-detail">No HTTP samples yet.</div>`);
     const times = state.metrics.map(row => Number(row.ts)).filter(Number.isFinite), run = times.length ? Math.max(...times)-Math.min(...times) : 0;
     const retention = `<section class="panel dashed"><div class="panel-head"><h2 class="panel-title">⧖ Retention</h2><span class="chip">${config.retention?.raw_days || 7}d raw · ${config.retention?.rollup_5m_days || 365}d rollups</span></div><p class="body-copy">The loaded metric history spans <strong style="color:var(--text)">${duration(run)}</strong>. Charts show only stored samples—no smoothing that invents shape and no axis that implies more history than exists.</p></section>`;
-    return `<div class="screen">${bands}${loss}<div class="grid-2">${dns}${http}</div>${retention}</div>`;
+    return `<div class="screen">${bands}${loss}<div class="grid-2">${dns}${http}</div>${docsisLineQualityPanel()}${retention}</div>`;
+  }
+
+  function docsisLineQualityPanel() {
+    const channelKinds = ["docsis_ds_snr", "docsis_ds_power", "docsis_ds_uncorrectables", "docsis_us_power"];
+    const channels = [...new Set(channelKinds.flatMap(kind => hitronSeries(kind).map(row => row.target)))].sort();
+    const latestChannels = kind => channels.map(target => latestHitron(kind, target)).filter(Boolean);
+    const snr = latestChannels("docsis_ds_snr");
+    const dsPower = latestChannels("docsis_ds_power");
+    const uncorrectables = latestChannels("docsis_ds_uncorrectables");
+    const usPower = latestChannels("docsis_us_power");
+    const snrWorst = snr.length ? Math.min(...snr.map(row => Number(row.value))) : null;
+    const powerWorst = dsPower.length ? dsPower.reduce((worst, row) => Math.abs(Number(row.value)) > Math.abs(Number(worst.value)) ? row : worst) : null;
+    const uncorrectableMax = uncorrectables.length ? Math.max(...uncorrectables.map(row => Number(row.value))) : null;
+    const uptime = latestHitron("modem_uptime_seconds", "modem");
+    const link = latestHitron("modem_link_speed", "modem");
+    const registered = latestHitron("modem_registered", "modem");
+    const registeredLabel = registered ? (Number(registered.value) > 0 ? "registered" : "not registered") : "no data";
+    const registeredTone = !registered ? "#586870" : Number(registered.value) > 0 ? "#3fb950" : "#f4584f";
+    const snrTone = snrWorst === null ? "#586870" : snrWorst < 30 ? "#f4584f" : snrWorst > 35 ? "#3fb950" : "#d8a657";
+    const powerTone = powerWorst === null ? "#586870" : Math.abs(Number(powerWorst.value)) > 15 ? "#f4584f" : "#3fb950";
+    const uncorrectableTone = uncorrectableMax === null ? "#586870" : uncorrectableMax > 0 ? "#f4584f" : "#3fb950";
+    if (!channels.length && !uptime && !link && !registered) {
+      return panel("DOCSIS line quality", `<div class="reason-detail">No modem line-quality samples yet.</div><p class="reason-detail">The Hitron collector is disabled or has not completed a poll.</p>`, "no data");
+    }
+    const status = `<div class="grid-3"><div class="stat"><div class="stat-label">modem uptime</div><div class="stat-value">${uptime ? duration(Number(uptime.value)) : "-"}</div><div class="stat-note">Hitron reported</div></div><div class="stat"><div class="stat-label">link speed</div><div class="stat-value">${link ? fmt(link.value,0) : "-"}<span class="unit">${link ? " Mbps" : ""}</span></div><div class="stat-note">modem ethernet link</div></div><div class="stat"><div class="stat-label">registration</div><div class="stat-value" style="color:${registeredTone}">${registeredLabel}</div><div class="stat-note">DOCSIS init stages</div></div></div>`;
+    const channelSummary = channels.length ? `<div class="grid-2"><div class="stat"><div class="stat-label">downstream SNR</div><div class="stat-value" style="color:${snrTone}">${snrWorst === null ? "-" : fmt(snrWorst)}<span class="unit"> dB worst</span></div><div class="stat-note">typical ${fmt(percentile(snr,.5))} dB - ${snr.length}/${channels.length} channels</div></div><div class="stat"><div class="stat-label">downstream power</div><div class="stat-value" style="color:${powerTone}">${powerWorst === null ? "-" : fmt(powerWorst.value)}<span class="unit"> dBmV worst</span></div><div class="stat-note">typical ${fmt(percentile(dsPower,.5))} dBmV - spec +/-15</div></div><div class="stat"><div class="stat-label">uncorrectables</div><div class="stat-value" style="color:${uncorrectableTone}">${uncorrectableMax === null ? "-" : fmt(uncorrectableMax,0)}<span class="unit"> max</span></div><div class="stat-note">${uncorrectables.filter(row => Number(row.value) > 0).length}/${uncorrectables.length} channels flagged</div></div><div class="stat"><div class="stat-label">upstream power</div><div class="stat-value">${fmt(percentile(usPower,.5))}<span class="unit"> dBmV typical</span></div><div class="stat-note">${usPower.length} channels reported</div></div></div>` : `<div class="reason-detail">No per-channel line-quality samples yet.</div>`;
+    return panel("DOCSIS line quality", `${status}${channelSummary}<p class="reason-detail">Summarized across ${channels.length || "no"} modem channels. SNR below 30 dB, downstream power outside +/-15 dBmV, and any uncorrectable errors are flagged.</p>`, `${channels.length} channels - hitron`);
   }
 
   function latencyBand(target) {
@@ -277,7 +308,8 @@
   }
 
   function bandwidthScreen() {
-    const unavailable = `<section class="panel unavailable"><div class="panel-head"><span class="proposal-icon">⊘</span><div><div class="eyebrow">Total WAN bandwidth</div><div class="unavailable-title">not available</div></div></div><p class="body-copy">netmon sits on a switched LAN behind an eero 7. A switch only forwards frames addressed to this host, and the eero implements no UPnP byte counters, no SSH, no SNMP and no local API—confirmed by direct probing. There is no household throughput number to show on this hardware.</p><div class="chips"><span class="chip">resolves with a gateway box · v1.1</span><span class="chip disabled">per-device via eero cloud · opt-in</span></div></section>`;
+    const modemRows = hitronSeries("wan_downstream_rate", "wan").slice(-240);
+    const wholeHouse = modemRows.length ? panel("Whole-house WAN edge", `<div class="throughput-stats"><div class="stat"><div class="stat-label">down - now</div><div class="stat-value" style="color:var(--mint)">${bytes(modemRows.at(-1)?.value)}</div><div class="stat-note">all devices at modem</div></div><div class="stat"><div class="stat-label">peak down</div><div class="stat-value">${bytes(percentile(modemRows,1))}</div><div class="stat-note">loaded sample window</div></div><div class="stat"><div class="stat-label">samples</div><div class="stat-value">${modemRows.length}</div><div class="stat-note">Hitron DOCSIS counter</div></div></div><div class="chartbox"><svg class="chart tall" viewBox="0 0 600 120" preserveAspectRatio="none"><path d="M0 30H600M0 60H600M0 90H600" stroke="#161d26" vector-effect="non-scaling-stroke"/><path d="${svgPath(modemRows,600,120,0)}" fill="none" stroke="#4af6c3" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg></div><p class="reason-detail">This is every device in the house measured at the WAN edge, not this PC. The modem exposes no upstream byte counter, so there is no upstream equivalent to display.</p>`, "downstream only - hitron source") : panel("Whole-house WAN edge", `<div class="reason-detail">No modem downstream samples yet.</div><p class="reason-detail">The Hitron collector is disabled or has not completed two counter polls. There is no upstream equivalent: the modem exposes no upstream byte counter.</p>`, "no data");
     const recvTargets = metricTargets("host_nic_bytes_recv_rate"), sentTargets = metricTargets("host_nic_bytes_sent_rate");
     const allTargets = [...new Set([...recvTargets,...sentTargets])];
     const recvRows = state.metrics.filter(r=>r.kind==="host_nic_bytes_recv_rate"), sentRows = state.metrics.filter(r=>r.kind==="host_nic_bytes_sent_rate");
@@ -300,7 +332,7 @@
     }).join("") : `<div class="reason-detail">Managed-host telemetry is disabled or has not reported yet.</div>`, `${managedHosts.length} configured/reported · SSH`);
     const managedNote = `<section class="panel dashed"><p class="body-copy">Managed-host rates are cumulative adapter counters read over SSH. They include that device's LAN traffic and are <strong style="color:var(--text)">not total WAN throughput</strong>.</p></section>`;
     const speed = `<section class="panel dashed"><div class="panel-head"><h2 class="panel-title">Speedtest · capacity</h2><span class="chip disabled">⊘ needs write API</span></div><p class="body-copy">Scheduled speedtest is <strong style="color:${config.speedtest?.enabled ? "var(--green)" : "var(--amber)"}">${config.speedtest?.enabled ? "enabled" : "disabled"}</strong>. Capacity is not utilisation, so it is never stacked on the host-traffic axis.</p><button class="btn" disabled>enable speedtest</button></section>`;
-    return `<div class="screen">${unavailable}${host}<div class="grid-2">${adapters}${processPanel}</div>${managed}${managedNote}${speed}</div>`;
+    return `<div class="screen">${wholeHouse}${host}<div class="grid-2">${adapters}${processPanel}</div>${managed}${managedNote}${speed}</div>`;
   }
 
   function alertsScreen() {

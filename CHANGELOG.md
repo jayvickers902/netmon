@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Hitron CODA DOCSIS monitoring: an unauthenticated modem probe and collector for downstream WAN
+  rates, channel signal/power/SNR/uncorrectable metrics, upstream power, modem uptime and link
+  speed; the `[hitron]` configuration section, committed `tests/fixtures/hitron/` captures,
+  `modem_reboot` events, and the `docs/hitron-capabilities.md` survey.
 - Investigation mode: authenticated investigation start/list/active/report/stop endpoints,
   burst polling for diagnostic collectors, scheduled-speedtest suppression during a window,
   deterministic upload-contention classification, and a dashboard investigation screen.

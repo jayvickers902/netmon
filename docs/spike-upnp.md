@@ -16,6 +16,11 @@ The v0.4 WAN bandwidth approach as originally planned is dead on this hardware.
 A secondary and more useful result: `WANIPConnection` *does* work, and gives
 router-reported WAN connection state. See [What is available](#what-is-available).
 
+> **Superseded note — 2026-07-28.** The UPnP conclusion above remains correct for the eero:
+> its byte counters are not implemented. A live survey of the bridged Hitron CODA found
+> unauthenticated `dsoctets` counters that provide total downstream WAN throughput. Upstream
+> throughput remains unavailable. See [`hitron-capabilities.md`](hitron-capabilities.md).
+
 ## Environment
 
 | | |
@@ -128,13 +133,14 @@ preference:
    an auth token, and does expose per-device usage. Introduces a cloud dependency
    into a LAN tool and can break without notice. **Not recommended**; record as an
    option, do not build speculatively.
-4. **Total WAN throughput** — no local source. Accept the gap, or resolve it with
-   the v1.1 gateway hardware decision, which would supply both this *and*
-   per-device accounting for free.
+4. **Total WAN throughput** — the eero still has no local source, but the bridged Hitron
+   now supplies verified total **downstream** throughput via `dsoctets`. **Upstream remains
+   unsourced.** Accept that asymmetry, or resolve it with the v1.1 gateway hardware decision,
+   which would supply upstream accounting, per-device attribution, and enforcement.
 
-ROADMAP v0.4 should be amended accordingly: drop `probes/upnp.py`'s byte-counter
-role, keep the probe for connection status, and stop implying total WAN throughput
-is achievable on the current topology.
+At the time of this spike, ROADMAP v0.4 was correctly amended to drop `probes/upnp.py`'s
+byte-counter role and keep the probe for connection status. The Hitron survey now supersedes
+only the topology-wide conclusion that total downstream WAN throughput is unavailable.
 
 ## Reproducing
 

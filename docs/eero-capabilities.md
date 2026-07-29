@@ -37,7 +37,8 @@ Confirmed live (see `spike-upnp.md` for the transcript):
 - ✅ `WANIPConnection:GetExternalIPAddress` — the WAN IP
 - ❌ `WANCommonInterfaceConfig` — *advertised but unimplemented*. Every action returns HTTP 500.
   `GetTotalBytesSent` / `GetTotalBytesReceived` are not declared. This is the byte-counter dead
-  end.
+  end. The bridged Hitron is a separate local source for downstream bytes; see
+  [`hitron-capabilities.md`](hitron-capabilities.md). It does not provide upstream octets.
 
 WAN uptime is the valuable one and netmon already consumes it: uptime moving backwards is
 ground truth that the *link* dropped, as opposed to local Wi-Fi trouble or a dead far end.

@@ -1,0 +1,11 @@
+[
+{
+"Configname":"^1/ABEB6205/2251",
+"ConfignameDisplay":"0",
+"NetworkAccess":"Permitted",
+"CmIpAddress":"10.80.82.63",
+"CmNetMask":"255.255.192.0",
+"CmGateway":"10.80.64.1",
+"CmIpLeaseDuration":"D: 10 H: 00 M: 00 S: 00"
+}
+]

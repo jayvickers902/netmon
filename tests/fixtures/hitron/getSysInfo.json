@@ -1,0 +1,17 @@
+[
+{
+"hwVersion":"2A",
+"swVersion":"7.3.5.3.3b4",
+"serialNumber":"AN0000000000",
+"rfMac":"00:11:22:33:44:55",
+"wanIp":"TODO",
+"systemUptime":"68h:18m:12s",
+"systemTime":"Wed Jul 29, 2026, 00:25:14",
+"timezone":"--",
+"WRecPkt":"TODO",
+"WSendPkt":"TODO",
+"lanIp":"TODO",
+"LRecPkt":"TODO",
+"LSendPkt":"TODO"
+}
+]

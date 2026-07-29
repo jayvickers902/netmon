@@ -27,6 +27,7 @@ from netmon.collectors.alerts import AlertCollector
 from netmon.collectors.base import Clock, Collector, RealClock
 from netmon.collectors.discovery import DiscoveryCollector
 from netmon.collectors.dns_probe import DnsCollector
+from netmon.collectors.docsis import DocsisCollector
 from netmon.collectors.eero_usage import EeroUsageCollector
 from netmon.collectors.host_nic import HostNicCollector
 from netmon.collectors.http_probe import HttpCollector
@@ -47,6 +48,7 @@ from netmon.probes.dns import ResolverDnsProbe
 from netmon.probes.eero_cloud import EeroCloudProbe, HttpxEeroTransport
 from netmon.probes.eero_token import FileEeroTokenStore
 from netmon.probes.gateway import create_gateway_probe
+from netmon.probes.hitron import HitronProbe
 from netmon.probes.host_nic import PsutilHostNicProbe
 from netmon.probes.hostname import create_hostname_probe
 from netmon.probes.http import HttpxProbe
@@ -170,6 +172,20 @@ def _default_scheduler(
     collectors: list[Collector] = [discovery, latency, dns, http]
     if settings.wan.enabled:
         collectors.append(wan)
+    if settings.hitron.enabled:
+        collectors.append(
+            DocsisCollector(
+                HitronProbe(
+                    base_url=str(settings.hitron.base_url),
+                    timeout_seconds=settings.hitron.timeout_seconds,
+                ),
+                clock,
+                settings.hitron,
+                event_sink=store.record_event,
+                investigation=investigation_state,
+                burst_interval_seconds=burst.hitron if investigation_state else None,
+            )
+        )
     if settings.host_nic.enabled:
         collectors.append(
             HostNicCollector(

@@ -9,8 +9,8 @@ Built to answer three questions quickly:
   HTTP probes, and an outage timeline with traceroutes captured at the moment things degraded.
 - **"What's on my network?"** — device inventory keyed by MAC, with vendor, hostname, and
   presence history.
-- **"What's using the connection?"** — per-NIC counters and periodic throughput tests. Read the
-  bandwidth row of the table below before expecting more than that.
+- **"What's using the connection?"** — modem-sourced total downstream bytes, per-NIC counters,
+  and periodic throughput tests. Upstream utilisation is not covered.
 
 ## Status
 
@@ -19,10 +19,10 @@ what has landed.
 
 ## Deployment context
 
-netmon runs as an ordinary host on the LAN, behind a **consumer router** — no SSH, no mirror
-port, no SNMP assumed. Everything it collects it obtains by active probing, ARP inspection, or
-unauthenticated UPnP, so it works without router cooperation. The reference deployment is
-behind an **eero 7 mesh**, which is cloud-managed and exposes no local API.
+netmon runs as an ordinary host on the LAN, behind a **Hitron CODA modem in bridge mode and an
+eero 7 mesh** — no SSH, no mirror port, no SNMP assumed. Everything it collects it obtains by
+active probing, ARP inspection, or unauthenticated local endpoints. The eero holds the public WAN
+IP and exposes no local management API; the bridged Hitron remains reachable for DOCSIS data.
 
 That constraint has real consequences, stated plainly:
 
@@ -30,18 +30,19 @@ That constraint has real consequences, stated plainly:
 |---|---|---|
 | Device inventory & presence | Yes | ARP table + ICMP sweep, reverse DNS / NetBIOS names, MAC→vendor, editable labels |
 | Connection health & troubleshooting | Yes | Latency, jitter, loss, DNS timing, HTTP probes, outage events, auto-traceroute |
-| WAN up/down, uptime, external IP | Yes | Router-reported via UPnP `WANIPConnection`. Distinguishes a real ISP outage from a local glitch |
+| WAN up/down, uptime, external IP | Yes | eero UPnP `WANIPConnection` plus independent Hitron modem uptime. Distinguishes a real ISP outage from a local glitch |
 | This host's bandwidth | Yes | Per-NIC and per-process counters |
 | Link capacity | Yes | Scheduled speedtest — capacity, not utilisation |
-| **Total WAN bandwidth** | **No** | The eero implements no UPnP byte counters and no local API. See [docs/spike-upnp.md](docs/spike-upnp.md) |
+| **Total WAN bandwidth** | **Downstream only** | Hitron `dsoctets` provides verified pre-NAT household downstream throughput; no upstream octet counter is exposed. See [docs/hitron-capabilities.md](docs/hitron-capabilities.md) |
 | Per-device bandwidth | Yes (opt-in) | eero cloud live rates are available with a separate non-Amazon account; passive LAN visibility remains impossible |
 | **Throttling** | **Not yet** | Requires a traffic enforcement point the current topology does not provide. See ROADMAP v1.1 |
 | Alerts & retention | Yes | Sustained rules, independent notifications, verified SQLite rollups, and dashboard history |
-| On-demand investigation | Yes | Distinguishes local-link, upstream, and upload contention. Attributes contention per-device only with opt-in eero cloud or managed-host telemetry; total WAN throughput remains unavailable and the displayed total is an estimate summed from per-device rates |
+| On-demand investigation | Yes | Distinguishes local-link, upstream, and upload contention. Attributes contention per-device only with opt-in eero cloud or managed-host telemetry; modem downstream totals are measured, while upstream utilisation remains unavailable |
 
-The total-WAN gap resolves by putting a Linux box in the traffic path as the gateway. That is
-the v1.1 hardware decision, and it is not taken unilaterally. Passive per-device visibility
-remains unavailable without either the opt-in eero cloud source or a gateway.
+The remaining upstream-accounting and enforcement gap resolves by putting a Linux box in the
+traffic path as the gateway. That is the v1.1 hardware decision, and it is not taken unilaterally.
+Passive per-device visibility remains unavailable without either the opt-in eero cloud source or
+a gateway.
 
 ## Requirements
 

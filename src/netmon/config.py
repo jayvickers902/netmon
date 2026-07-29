@@ -114,6 +114,14 @@ class EeroConfig(BaseModel):
         return self
 
 
+class HitronConfig(BaseModel):
+    enabled: bool = True
+    # The modem is an embedded device whose day job is keeping the house online.
+    interval_seconds: float = Field(default=30.0, ge=30.0)
+    base_url: HttpUrl = HttpUrl("http://192.168.100.1")
+    timeout_seconds: float = Field(default=5.0, gt=0)
+
+
 class ManagedHostTargetConfig(BaseModel):
     """SSH connection and adapter identity for one explicitly managed Windows host."""
 
@@ -175,6 +183,8 @@ class BurstIntervalsConfig(BaseModel):
     host_nic: float = Field(default=2.0, ge=1.0)
     # Eero's undocumented, unrate-limited cloud endpoint must not be polled more often.
     eero: float = Field(default=30.0, ge=30.0)
+    # The modem is an embedded device whose day job is keeping the house online.
+    hitron: float = Field(default=30.0, ge=30.0)
     managed_hosts: float = Field(default=10.0, ge=5.0)
 
 
@@ -291,6 +301,7 @@ class NetmonSettings(BaseSettings):
     host_nic: HostNicConfig = Field(default_factory=HostNicConfig)
     speedtest: SpeedtestConfig = Field(default_factory=SpeedtestConfig)
     eero: EeroConfig = Field(default_factory=EeroConfig)
+    hitron: HitronConfig = Field(default_factory=HitronConfig)
     managed_hosts: ManagedHostsConfig = Field(default_factory=ManagedHostsConfig)
     investigation: InvestigationConfig = Field(default_factory=InvestigationConfig)
     retention: RetentionConfig = Field(default_factory=RetentionConfig)
