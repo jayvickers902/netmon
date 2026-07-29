@@ -1,0 +1,16 @@
+[
+  {
+    "index": 1,
+    "time": "07/28/26 09:39:49",
+    "type": "82000200",
+    "priority": "critical",
+    "event": "No Ranging Response received - T3 time-out;CM-MAC=00:00:00:00:00:00;CMTS-MAC=00:00:00:00:00:00;CM-QOS=1.1;CM-VER=3.1;"
+  },
+  {
+    "index": 2,
+    "time": "07/28/26 08:43:34",
+    "type": "82000400",
+    "priority": "warning",
+    "event": "Received Response to Broadcast Maintenance Request, But no Unicast Maintenance opportunities received - T4 time out;CM-MAC=00:00:00:00:00:00;CMTS-MAC=00:00:00:00:00:00;CM-QOS=1.1;CM-VER=3.1;"
+  }
+]

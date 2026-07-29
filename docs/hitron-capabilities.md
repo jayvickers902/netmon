@@ -72,9 +72,16 @@ Several fields are the literal string `"TODO"` — Hitron ships placeholder valu
 firmware doesn't populate in this mode. **A parser must treat `"TODO"`, `"NA"`, and `"Unknow"`
 [sic] as null**, not as data. `getConnectInfo.asp` returns `[]` in bridge mode.
 
-No event-log endpoint is exposed unauthenticated. `getEventLog.asp` and ~20 other plausible names
-all 404. The event log — where T3/T4 ranging timeouts would appear — lives behind the web login.
-That is the one genuinely valuable thing still locked.
+The DOCSIS event log is exposed at **`/data/status_log.asp`**. The initial filename survey missed
+it because the UI names the page `status_log`, not `getEventLog`. Inspecting the login page showed
+that it creates a guest session with the literal `nologin` / `nologin`; that session's menu and
+`js/status_log.js` revealed the endpoint. A direct GET then proved the endpoint does not actually
+require the guest cookie.
+
+This is high-value evidence: the live log contained T3 ranging timeouts, T4 maintenance timeouts,
+loss-of-sync, MDD failures, and ranging-power warnings. The T4/loss-of-sync sequence at 08:43
+aligned exactly with the previously unexplained degradation. Event strings also contain CM and
+CMTS MAC addresses, so netmon strips the metadata suffix before persisting or displaying them.
 
 ## 3. The throughput unlock
 
@@ -156,16 +163,25 @@ The existing `metric(kind, target, unit, source)` schema takes this without migr
 |---|---|---|
 | `wan_downstream_rate` | `wan` | `bytes_per_second` |
 | `docsis_ds_snr` / `docsis_ds_power` | `ch:<channelId>` | `db` / `dbmv` |
-| `docsis_ds_uncorrectables` | `ch:<channelId>` | `count` |
+| `docsis_ds_corrected` / `docsis_ds_uncorrectables` | `ch:<channelId>` or `ofdm:<id>` | `count` |
+| `docsis_ds_corrected_rate` / `docsis_ds_uncorrectable_rate` | channel target | `errors_per_second` |
+| `docsis_corrected_rate` / `docsis_uncorrectable_rate` | `modem` | `errors_per_second` |
 | `docsis_us_power` | `ch:<channelId>` | `dbmv` |
 | `modem_uptime_seconds` | `modem` | `seconds` |
 | `modem_link_speed` | `modem` | `mbps` |
+| `modem_available` | `modem` | `boolean` |
+| `modem_poll_latency_ms` | `modem` | `ms` |
+
+New log rows are emitted as `docsis_event` events after the first poll establishes a baseline.
+The collector fingerprints rows independently of their shifting display index, suppresses
+replays, preserves the modem's timestamp as detail, and timestamps observation with the injected
+collector clock. Existing rows are deliberately not replayed on process startup.
 
 Shape it as `probes/hitron.py` + `collectors/docsis.py`, mirroring `upnp.py` / `wan_status.py`.
 Constraints worth writing into the code:
 
-- **Fail soft.** The modem is on a different subnet reached through the eero; treat unreachable
-  as "unavailable", never as an outage signal in itself.
+- **Fail soft.** The modem is on a different subnet reached through the eero. Record availability
+  and poll latency, but do not treat one missing poll as an outage signal.
 - **Poll no faster than 30 s.** These are embedded endpoints on a device whose day job is keeping
   the house online.
 - **Disable TLS verification** if using HTTPS (self-signed), or just use HTTP — same content, and

@@ -17,6 +17,7 @@ ENDPOINTS = (
     "getSysInfo.asp",
     "getLinkStatus.asp",
     "getCMInit.asp",
+    "status_log.asp",
 )
 
 
@@ -50,7 +51,7 @@ async def test_status_parses_captured_hitron_fixtures() -> None:
     status = await probe.status()
 
     assert status is not None
-    assert len(status.downstream) == 24
+    assert len(status.downstream) == 25
     assert len(status.upstream) == 4
     assert status.downstream_octets_total == 58_723_275_423
     assert status.uptime_seconds == 68 * 3600 + 18 * 60 + 12
@@ -58,6 +59,15 @@ async def test_status_parses_captured_hitron_fixtures() -> None:
     assert status.link_up is True
     assert status.software_version == "7.3.5.3.3b4"
     assert status.registered is True
+    assert status.event_log_available is True
+    assert len(status.event_log) == 2
+    assert status.event_log[0].priority == "critical"
+    assert status.event_log[0].message == "No Ranging Response received - T3 time-out"
+    assert "CM-MAC" not in status.event_log[0].message
+    ofdm = next(channel for channel in status.downstream if channel.channel_type == "ofdm")
+    assert ofdm.channel_id == 1
+    assert ofdm.corrected == 207_300_868
+    assert ofdm.uncorrectable == 2_095
     await probe.close()
 
 
@@ -126,7 +136,7 @@ async def test_one_failed_endpoint_does_not_discard_partial_status() -> None:
     status = await probe.status()
 
     assert status is not None
-    assert len(status.downstream) == 24
+    assert len(status.downstream) == 25
     assert len(status.upstream) == 4
     assert status.link_speed_mbps is None
     assert status.link_up is None

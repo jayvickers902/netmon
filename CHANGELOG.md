@@ -34,9 +34,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uplink-capacity reference, and ranked live uploaders; the example config documents a sustained
   80%-of-capacity warning rule.
 - Hitron CODA DOCSIS monitoring: an unauthenticated modem probe and collector for downstream WAN
-  rates, channel signal/power/SNR/uncorrectable metrics, upstream power, modem uptime and link
-  speed; the `[hitron]` configuration section, committed `tests/fixtures/hitron/` captures,
-  `modem_reboot` events, and the `docs/hitron-capabilities.md` survey.
+  rates, QAM/OFDM channel signal/power/SNR and corrected/uncorrectable totals and rates, upstream
+  power, modem uptime, availability, poll latency, and link speed. The discovered
+  `/data/status_log.asp` feed adds sanitized, startup-baselined, deduplicated `docsis_event`
+  records for T3/T4, loss-of-sync, MDD, and ranging failures. Includes the `[hitron]`
+  configuration section, captured fixtures, `modem_reboot` events, capability survey, and a
+  dashboard health summary based on availability, poll latency, registration, and live error
+  rates rather than stale lifetime totals.
 - Investigation mode: authenticated investigation start/list/active/report/stop endpoints,
   burst polling for diagnostic collectors, scheduled-speedtest suppression during a window,
   deterministic upload-contention classification, and a dashboard investigation screen.

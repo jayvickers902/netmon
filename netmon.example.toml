@@ -191,6 +191,39 @@ windows_toast = true
 # failures_to_open = 2
 # successes_to_close = 2
 # severity = "warning"
+# Sustained modem management-path failure:
+# [[alerts.rules]]
+# name = "modem unavailable"
+# metric_kind = "modem_available"
+# target = "modem"
+# source = "hitron"
+# operator = "<"
+# threshold = 0.5
+# failures_to_open = 2
+# successes_to_close = 2
+# severity = "warning"
+# Sustained downstream errors that could indicate coax/plant trouble:
+# [[alerts.rules]]
+# name = "DOCSIS uncorrectable errors"
+# metric_kind = "docsis_uncorrectable_rate"
+# target = "modem"
+# source = "hitron"
+# operator = ">="
+# threshold = 1.0
+# failures_to_open = 2
+# successes_to_close = 2
+# severity = "warning"
+# Poll latency is the complete parallel Hitron status fetch; tune this above the modem's baseline:
+# [[alerts.rules]]
+# name = "modem response slow"
+# metric_kind = "modem_poll_latency_ms"
+# target = "modem"
+# source = "hitron"
+# operator = ">="
+# threshold = 2500
+# failures_to_open = 3
+# successes_to_close = 2
+# severity = "warning"
 # webhook_url = "https://..."
 
 [throttle]

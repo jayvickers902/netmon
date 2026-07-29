@@ -2,14 +2,19 @@
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Awaitable
+from datetime import datetime
 
 from netmon.collectors.base import Clock, Collector
 from netmon.collectors.health import EventSink
 from netmon.config import HitronConfig
 from netmon.investigation import InvestigationState
 from netmon.models import Event, Sample
-from netmon.probes.hitron import HitronProbe
+from netmon.probes.hitron import DocsisEventLogEntry, HitronProbe
+
+_SEVERITIES = frozenset({"info", "warning", "error", "critical"})
+_EventKey = tuple[str, str, str, str]
 
 
 class DocsisCollector(Collector):
@@ -31,6 +36,11 @@ class DocsisCollector(Collector):
         self.previous_octets: int | None = None
         self.previous_octets_monotonic: float | None = None
         self.previous_uptime: int | None = None
+        self.previous_errors: dict[str, tuple[int | None, int | None]] = {}
+        self.previous_errors_monotonic: float | None = None
+        self.events_initialized = False
+        self.seen_event_order: deque[_EventKey] = deque()
+        self.seen_events: set[_EventKey] = set()
 
     @property
     def name(self) -> str:
@@ -48,10 +58,29 @@ class DocsisCollector(Collector):
 
     async def collect(self) -> list[Sample]:
         now = self.clock.now()
-        monotonic = self.clock.monotonic()
+        started = self.clock.monotonic()
         status = await self.hitron.status()
+        monotonic = self.clock.monotonic()
+        samples = [
+            Sample(
+                "modem_available",
+                "modem",
+                "boolean",
+                now,
+                float(status is not None),
+                "hitron",
+            ),
+            Sample(
+                "modem_poll_latency_ms",
+                "modem",
+                "ms",
+                now,
+                max(0.0, monotonic - started) * 1000.0,
+                "hitron",
+            ),
+        ]
         if status is None:
-            return []
+            return samples
 
         rebooted = (
             self.previous_uptime is not None
@@ -73,7 +102,8 @@ class DocsisCollector(Collector):
             )
             await _maybe_await(event_result)
 
-        samples: list[Sample] = []
+        await self._record_new_docsis_events(status.event_log, status.event_log_available, now)
+
         octets = status.downstream_octets_total
         if (
             not rebooted
@@ -95,8 +125,16 @@ class DocsisCollector(Collector):
                     )
                 )
 
+        aggregate_corrected_rate = 0.0
+        aggregate_uncorrectable_rate = 0.0
+        has_corrected_rate = False
+        has_uncorrectable_rate = False
         for downstream_channel in status.downstream:
-            target = f"ch:{downstream_channel.channel_id}"
+            target = (
+                f"ofdm:{downstream_channel.channel_id}"
+                if downstream_channel.channel_type == "ofdm"
+                else f"ch:{downstream_channel.channel_id}"
+            )
             if downstream_channel.snr_db is not None:
                 samples.append(
                     Sample("docsis_ds_snr", target, "db", now, downstream_channel.snr_db, "hitron")
@@ -112,6 +150,17 @@ class DocsisCollector(Collector):
                         "hitron",
                     )
                 )
+            if downstream_channel.corrected is not None:
+                samples.append(
+                    Sample(
+                        "docsis_ds_corrected",
+                        target,
+                        "count",
+                        now,
+                        float(downstream_channel.corrected),
+                        "hitron",
+                    )
+                )
             if downstream_channel.uncorrectable is not None:
                 samples.append(
                     Sample(
@@ -123,6 +172,52 @@ class DocsisCollector(Collector):
                         "hitron",
                     )
                 )
+            previous_errors = self.previous_errors.get(target)
+            elapsed = (
+                monotonic - self.previous_errors_monotonic
+                if self.previous_errors_monotonic is not None
+                else 0.0
+            )
+            if not rebooted and previous_errors is not None and elapsed > 0:
+                rate_samples = _error_rate_samples(
+                    now,
+                    target,
+                    elapsed,
+                    downstream_channel.corrected,
+                    downstream_channel.uncorrectable,
+                    previous_errors,
+                )
+                samples.extend(rate_samples)
+                for rate_sample in rate_samples:
+                    if rate_sample.metric_kind == "docsis_ds_corrected_rate":
+                        aggregate_corrected_rate += rate_sample.value
+                        has_corrected_rate = True
+                    else:
+                        aggregate_uncorrectable_rate += rate_sample.value
+                        has_uncorrectable_rate = True
+
+        if has_corrected_rate:
+            samples.append(
+                Sample(
+                    "docsis_corrected_rate",
+                    "modem",
+                    "errors_per_second",
+                    now,
+                    aggregate_corrected_rate,
+                    "hitron",
+                )
+            )
+        if has_uncorrectable_rate:
+            samples.append(
+                Sample(
+                    "docsis_uncorrectable_rate",
+                    "modem",
+                    "errors_per_second",
+                    now,
+                    aggregate_uncorrectable_rate,
+                    "hitron",
+                )
+            )
 
         for upstream_channel in status.upstream:
             if upstream_channel.power_dbmv is not None:
@@ -179,8 +274,62 @@ class DocsisCollector(Collector):
             self.previous_octets_monotonic = monotonic
         if status.uptime_seconds is not None:
             self.previous_uptime = status.uptime_seconds
+        self.previous_errors = {
+            (
+                f"ofdm:{channel.channel_id}"
+                if channel.channel_type == "ofdm"
+                else f"ch:{channel.channel_id}"
+            ): (channel.corrected, channel.uncorrectable)
+            for channel in status.downstream
+        }
+        self.previous_errors_monotonic = monotonic
 
         return samples
+
+    async def _record_new_docsis_events(
+        self,
+        entries: tuple[DocsisEventLogEntry, ...],
+        available: bool,
+        now: datetime,
+    ) -> None:
+        if not available:
+            return
+        if not self.events_initialized:
+            for entry in entries:
+                self._remember_event(_event_key(entry))
+            self.events_initialized = True
+            return
+        for entry in reversed(entries):
+            key = _event_key(entry)
+            if key in self.seen_events:
+                continue
+            self._remember_event(key)
+            if self.event_sink is None:
+                continue
+            severity = entry.priority if entry.priority in _SEVERITIES else "info"
+            event_result = self.event_sink(
+                Event(
+                    now,
+                    "docsis_event",
+                    severity,
+                    f"DOCSIS: {entry.message}",
+                    {
+                        "modem_time": entry.modem_time,
+                        "type_code": entry.type_code,
+                        "priority": entry.priority,
+                    },
+                )
+            )
+            await _maybe_await(event_result)
+
+    def _remember_event(self, key: _EventKey) -> None:
+        if key in self.seen_events:
+            return
+        if len(self.seen_event_order) >= 256:
+            expired = self.seen_event_order.popleft()
+            self.seen_events.remove(expired)
+        self.seen_event_order.append(key)
+        self.seen_events.add(key)
 
     async def close(self) -> None:
         close = getattr(self.hitron, "close", None)
@@ -194,3 +343,37 @@ async def _maybe_await(value: int | Awaitable[int]) -> int:
     if isinstance(value, Awaitable):
         return await value
     return value
+
+
+def _event_key(entry: DocsisEventLogEntry) -> _EventKey:
+    return entry.modem_time, entry.type_code, entry.priority, entry.message
+
+
+def _error_rate_samples(
+    now: datetime,
+    target: str,
+    elapsed: float,
+    corrected: int | None,
+    uncorrectable: int | None,
+    previous: tuple[int | None, int | None],
+) -> list[Sample]:
+    samples: list[Sample] = []
+    for metric_kind, current, prior in (
+        ("docsis_ds_corrected_rate", corrected, previous[0]),
+        ("docsis_ds_uncorrectable_rate", uncorrectable, previous[1]),
+    ):
+        if current is None or prior is None:
+            continue
+        delta = current - prior
+        if delta >= 0:
+            samples.append(
+                Sample(
+                    metric_kind,
+                    target,
+                    "errors_per_second",
+                    now,
+                    delta / elapsed,
+                    "hitron",
+                )
+            )
+    return samples

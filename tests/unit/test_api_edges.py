@@ -64,4 +64,7 @@ def test_dashboard_routes_and_assets_do_not_expose_secrets(tmp_path):
         )
         assert "Live uploaders · ranked" in script.text
         assert "not a Hitron or local WAN byte counter" in script.text
+        assert "modem_poll_latency_ms" in script.text
+        assert "docsis_uncorrectable_rate" in script.text
+        assert "not stale lifetime error totals" in script.text
         assert "window.prompt" not in script.text

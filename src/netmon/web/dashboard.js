@@ -341,30 +341,36 @@
   }
 
   function docsisLineQualityPanel() {
-    const channelKinds = ["docsis_ds_snr", "docsis_ds_power", "docsis_ds_uncorrectables", "docsis_us_power"];
+    const channelKinds = ["docsis_ds_snr", "docsis_ds_power", "docsis_ds_uncorrectables", "docsis_ds_uncorrectable_rate", "docsis_us_power"];
     const channels = [...new Set(channelKinds.flatMap(kind => hitronSeries(kind).map(row => row.target)))].sort();
     const latestChannels = kind => channels.map(target => latestHitron(kind, target)).filter(Boolean);
     const snr = latestChannels("docsis_ds_snr");
     const dsPower = latestChannels("docsis_ds_power");
     const uncorrectables = latestChannels("docsis_ds_uncorrectables");
+    const uncorrectableRates = latestChannels("docsis_ds_uncorrectable_rate");
     const usPower = latestChannels("docsis_us_power");
     const snrWorst = snr.length ? Math.min(...snr.map(row => Number(row.value))) : null;
     const powerWorst = dsPower.length ? dsPower.reduce((worst, row) => Math.abs(Number(row.value)) > Math.abs(Number(worst.value)) ? row : worst) : null;
-    const uncorrectableMax = uncorrectables.length ? Math.max(...uncorrectables.map(row => Number(row.value))) : null;
+    const uncorrectableMax = uncorrectableRates.length ? Math.max(...uncorrectableRates.map(row => Number(row.value))) : null;
     const uptime = latestHitron("modem_uptime_seconds", "modem");
     const link = latestHitron("modem_link_speed", "modem");
     const registered = latestHitron("modem_registered", "modem");
+    const available = latestHitron("modem_available", "modem");
+    const pollLatency = latestHitron("modem_poll_latency_ms", "modem");
+    const aggregateUncorrectableRate = latestHitron("docsis_uncorrectable_rate", "modem");
     const registeredLabel = registered ? (Number(registered.value) > 0 ? "registered" : "not registered") : "no data";
     const registeredTone = !registered ? "#586870" : Number(registered.value) > 0 ? "#3fb950" : "#f4584f";
     const snrTone = snrWorst === null ? "#586870" : snrWorst < 30 ? "#f4584f" : snrWorst > 35 ? "#3fb950" : "#d8a657";
     const powerTone = powerWorst === null ? "#586870" : Math.abs(Number(powerWorst.value)) > 15 ? "#f4584f" : "#3fb950";
     const uncorrectableTone = uncorrectableMax === null ? "#586870" : uncorrectableMax > 0 ? "#f4584f" : "#3fb950";
-    if (!channels.length && !uptime && !link && !registered) {
+    const availableLabel = !available ? "no data" : Number(available.value) > 0 ? "available" : "unreachable";
+    const availableTone = !available ? "#586870" : Number(available.value) > 0 ? "#3fb950" : "#f4584f";
+    if (!channels.length && !uptime && !link && !registered && !available) {
       return panel("DOCSIS line quality", `<div class="reason-detail">No modem line-quality samples yet.</div><p class="reason-detail">The Hitron collector is disabled or has not completed a poll.</p>`, "no data");
     }
-    const status = `<div class="grid-3"><div class="stat"><div class="stat-label">modem uptime</div><div class="stat-value">${uptime ? duration(Number(uptime.value)) : "-"}</div><div class="stat-note">Hitron reported</div></div><div class="stat"><div class="stat-label">link speed</div><div class="stat-value">${link ? fmt(link.value,0) : "-"}<span class="unit">${link ? " Mbps" : ""}</span></div><div class="stat-note">modem ethernet link</div></div><div class="stat"><div class="stat-label">registration</div><div class="stat-value" style="color:${registeredTone}">${registeredLabel}</div><div class="stat-note">DOCSIS init stages</div></div></div>`;
-    const channelSummary = channels.length ? `<div class="grid-2"><div class="stat"><div class="stat-label">downstream SNR</div><div class="stat-value" style="color:${snrTone}">${snrWorst === null ? "-" : fmt(snrWorst)}<span class="unit"> dB worst</span></div><div class="stat-note">typical ${fmt(percentile(snr,.5))} dB - ${snr.length}/${channels.length} channels</div></div><div class="stat"><div class="stat-label">downstream power</div><div class="stat-value" style="color:${powerTone}">${powerWorst === null ? "-" : fmt(powerWorst.value)}<span class="unit"> dBmV worst</span></div><div class="stat-note">typical ${fmt(percentile(dsPower,.5))} dBmV - spec +/-15</div></div><div class="stat"><div class="stat-label">uncorrectables</div><div class="stat-value" style="color:${uncorrectableTone}">${uncorrectableMax === null ? "-" : fmt(uncorrectableMax,0)}<span class="unit"> max</span></div><div class="stat-note">${uncorrectables.filter(row => Number(row.value) > 0).length}/${uncorrectables.length} channels flagged</div></div><div class="stat"><div class="stat-label">upstream power</div><div class="stat-value">${fmt(percentile(usPower,.5))}<span class="unit"> dBmV typical</span></div><div class="stat-note">${usPower.length} channels reported</div></div></div>` : `<div class="reason-detail">No per-channel line-quality samples yet.</div>`;
-    return panel("DOCSIS line quality", `${status}${channelSummary}<p class="reason-detail">Summarized across ${channels.length || "no"} modem channels. SNR below 30 dB, downstream power outside +/-15 dBmV, and any uncorrectable errors are flagged.</p>`, `${channels.length} channels - hitron`);
+    const status = `<div class="grid-2"><div class="stat"><div class="stat-label">modem health</div><div class="stat-value" style="color:${availableTone}">${availableLabel}</div><div class="stat-note">${pollLatency ? `${fmt(pollLatency.value,0)} ms poll latency` : "no latency sample"}</div></div><div class="stat"><div class="stat-label">modem uptime</div><div class="stat-value">${uptime ? duration(Number(uptime.value)) : "-"}</div><div class="stat-note">Hitron reported</div></div><div class="stat"><div class="stat-label">link speed</div><div class="stat-value">${link ? fmt(link.value,0) : "-"}<span class="unit">${link ? " Mbps" : ""}</span></div><div class="stat-note">modem ethernet link</div></div><div class="stat"><div class="stat-label">registration</div><div class="stat-value" style="color:${registeredTone}">${registeredLabel}</div><div class="stat-note">DOCSIS init stages</div></div></div>`;
+    const channelSummary = channels.length ? `<div class="grid-2"><div class="stat"><div class="stat-label">downstream SNR</div><div class="stat-value" style="color:${snrTone}">${snrWorst === null ? "-" : fmt(snrWorst)}<span class="unit"> dB worst</span></div><div class="stat-note">typical ${fmt(percentile(snr,.5))} dB - ${snr.length}/${channels.length} channels</div></div><div class="stat"><div class="stat-label">downstream power</div><div class="stat-value" style="color:${powerTone}">${powerWorst === null ? "-" : fmt(powerWorst.value)}<span class="unit"> dBmV worst</span></div><div class="stat-note">typical ${fmt(percentile(dsPower,.5))} dBmV - spec +/-15</div></div><div class="stat"><div class="stat-label">uncorrectable rate</div><div class="stat-value" style="color:${uncorrectableTone}">${aggregateUncorrectableRate ? fmt(aggregateUncorrectableRate.value,2) : "-"}<span class="unit"> errors/s total</span></div><div class="stat-note">${uncorrectableMax === null ? "awaiting second poll" : `${fmt(uncorrectableMax,2)} errors/s worst channel`} · ${uncorrectables.length} counters</div></div><div class="stat"><div class="stat-label">upstream power</div><div class="stat-value">${fmt(percentile(usPower,.5))}<span class="unit"> dBmV typical</span></div><div class="stat-note">${usPower.length} channels reported</div></div></div>` : `<div class="reason-detail">No per-channel line-quality samples yet.</div>`;
+    return panel("DOCSIS line quality", `${status}${channelSummary}<p class="reason-detail">Summarized across ${channels.length || "no"} QAM and OFDM channels. Health is based on local modem availability, response time, registration, line levels, and counter deltas—not stale lifetime error totals.</p>`, `${channels.length} channels - hitron`);
   }
 
   function latencyBand(target) {

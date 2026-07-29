@@ -27,6 +27,7 @@ class DownstreamChannel:
     corrected: int | None
     uncorrectable: int | None
     octets: int | None
+    channel_type: str = "qam"
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +37,14 @@ class UpstreamChannel:
     bandwidth_hz: int
     modulation: str | None
     power_dbmv: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class DocsisEventLogEntry:
+    modem_time: str
+    type_code: str
+    priority: str
+    message: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +61,8 @@ class DocsisStatus:
     software_version: str | None
     #: True when every stage in getCMInit.asp reports Success.
     registered: bool | None
+    event_log: tuple[DocsisEventLogEntry, ...] = ()
+    event_log_available: bool = False
 
 
 class HitronProbe:
@@ -81,6 +92,7 @@ class HitronProbe:
             "getSysInfo.asp",
             "getLinkStatus.asp",
             "getCMInit.asp",
+            "status_log.asp",
         )
         try:
             responses = await asyncio.gather(
@@ -94,11 +106,12 @@ class HitronProbe:
             response if not isinstance(response, Exception) else None for response in responses
         ]
         downstream, qam_octets, downstream_learned = _parse_downstream(payloads[0])
-        ofdm_octets, ofdm_learned = _parse_octets(payloads[1])
+        ofdm, ofdm_octets, ofdm_learned = _parse_ofdm(payloads[1])
         upstream, upstream_learned = _parse_upstream(payloads[2])
         uptime, software_version, system_learned = _parse_system(payloads[3])
         link_speed, link_up, link_learned = _parse_link(payloads[4])
         registered, registration_learned = _parse_registration(payloads[5])
+        event_log, event_log_available = _parse_event_log(payloads[6])
 
         if not any(
             (
@@ -108,13 +121,14 @@ class HitronProbe:
                 system_learned,
                 link_learned,
                 registration_learned,
+                event_log_available,
             )
         ):
             return None
 
         octet_values = [value for value in (qam_octets, ofdm_octets) if value is not None]
         return DocsisStatus(
-            downstream=downstream,
+            downstream=downstream + ofdm,
             upstream=upstream,
             downstream_octets_total=sum(octet_values) if octet_values else None,
             uptime_seconds=uptime,
@@ -122,6 +136,8 @@ class HitronProbe:
             link_up=link_up,
             software_version=software_version,
             registered=registered,
+            event_log=event_log,
+            event_log_available=event_log_available,
         )
 
     async def close(self) -> None:
@@ -160,6 +176,7 @@ _STAGE_ALIASES = {"timeOfDay": ("timeOfDay", "timeOfday")}
 _UPTIME_RE = re.compile(r"(?:(\d+)d:)?(\d+)h:(\d+)m:(\d+)s")
 _MBPS_RE = re.compile(r"([+-]?\d+(?:\.\d+)?)\s*Mbps", re.IGNORECASE)
 _PADDED_ZERO_RE = re.compile(r"[+-]?0(?:\.0+)?")
+_EVENT_METADATA_RE = re.compile(r";CM(?:TS)?-(?:MAC|QOS|VER)=.*$", re.IGNORECASE)
 
 
 def _records(payload: Any) -> list[dict[str, Any]]:
@@ -235,13 +252,33 @@ def _parse_downstream(
     return tuple(channels), sum(octets) if octets else None, learned
 
 
-def _parse_octets(payload: Any) -> tuple[int | None, bool]:
+def _parse_ofdm(
+    payload: Any,
+) -> tuple[tuple[DownstreamChannel, ...], int | None, bool]:
+    channels: list[DownstreamChannel] = []
     octets: list[int] = []
     for record in _records(payload):
-        value = _integer(record.get("dsoctets"))
-        if value is not None:
-            octets.append(value)
-    return (sum(octets), True) if octets else (None, False)
+        channel_octets = _integer(record.get("dsoctets"))
+        if channel_octets is not None:
+            octets.append(channel_octets)
+        channel_id = _integer(record.get("receive"))
+        frequency = _integer(record.get("Subcarr0freqFreq"))
+        if channel_id is None or frequency is None:
+            continue
+        channels.append(
+            DownstreamChannel(
+                channel_id=channel_id,
+                frequency_hz=frequency,
+                snr_db=_decimal(record.get("SNR")),
+                power_dbmv=_decimal(record.get("plcpower")),
+                corrected=_integer(record.get("correcteds")),
+                uncorrectable=_integer(record.get("uncorrect")),
+                octets=channel_octets,
+                channel_type="ofdm",
+            )
+        )
+    learned = bool(channels or octets)
+    return tuple(channels), sum(octets) if octets else None, learned
 
 
 def _parse_upstream(payload: Any) -> tuple[tuple[UpstreamChannel, ...], bool]:
@@ -302,6 +339,35 @@ def _parse_registration(payload: Any) -> tuple[bool | None, bool]:
         _text(_stage_value(record, stage)) == "Success" for stage in _STAGES
     )
     return registered, True
+
+
+def _parse_event_log(payload: Any) -> tuple[tuple[DocsisEventLogEntry, ...], bool]:
+    if not isinstance(payload, list):
+        return (), False
+    events: list[DocsisEventLogEntry] = []
+    for record in _records(payload):
+        modem_time = _text(record.get("time"))
+        type_code = _text(record.get("type"))
+        priority = _text(record.get("priority"))
+        message = _text(record.get("event"))
+        if None in (modem_time, type_code, priority, message):
+            continue
+        assert modem_time is not None
+        assert type_code is not None
+        assert priority is not None
+        assert message is not None
+        sanitized = _EVENT_METADATA_RE.sub("", message).strip().rstrip(";")
+        if not sanitized:
+            continue
+        events.append(
+            DocsisEventLogEntry(
+                modem_time=modem_time,
+                type_code=type_code,
+                priority=priority.lower(),
+                message=sanitized,
+            )
+        )
+    return tuple(events), True
 
 
 def _stage_keys(stage: str) -> tuple[str, ...]:

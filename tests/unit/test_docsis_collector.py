@@ -10,6 +10,7 @@ from netmon.config import HitronConfig
 from netmon.investigation import InvestigationState
 from netmon.models import Event
 from netmon.probes.hitron import (
+    DocsisEventLogEntry,
     DocsisStatus,
     DownstreamChannel,
     UpstreamChannel,
@@ -17,10 +18,19 @@ from netmon.probes.hitron import (
 
 
 class FakeHitronProbe:
-    def __init__(self, statuses: list[DocsisStatus | None]) -> None:
+    def __init__(
+        self,
+        statuses: list[DocsisStatus | None],
+        clock: FrozenClock | None = None,
+        latency_seconds: float = 0.0,
+    ) -> None:
         self._statuses = iter(statuses)
+        self._clock = clock
+        self._latency_seconds = latency_seconds
 
     async def status(self) -> DocsisStatus | None:
+        if self._clock is not None:
+            self._clock.advance(self._latency_seconds)
         return next(self._statuses)
 
     async def close(self) -> None:
@@ -35,6 +45,8 @@ def status(
     registered: bool | None = None,
     downstream: tuple[DownstreamChannel, ...] = (),
     upstream: tuple[UpstreamChannel, ...] = (),
+    event_log: tuple[DocsisEventLogEntry, ...] = (),
+    event_log_available: bool = False,
 ) -> DocsisStatus:
     return DocsisStatus(
         downstream,
@@ -45,6 +57,8 @@ def status(
         True,
         "7.2.1",
         registered,
+        event_log,
+        event_log_available,
     )
 
 
@@ -55,9 +69,10 @@ def make_collector(
     *,
     investigation: InvestigationState | None = None,
     burst_interval_seconds: float | None = None,
+    latency_seconds: float = 0.0,
 ) -> DocsisCollector:
     return DocsisCollector(
-        FakeHitronProbe(statuses),
+        FakeHitronProbe(statuses, frozen_clock, latency_seconds),
         frozen_clock,
         HitronConfig(),
         event_sink,
@@ -91,6 +106,7 @@ async def test_emits_contract_samples_from_status(frozen_clock: FrozenClock):
     } == {
         ("docsis_ds_snr", "ch:1", "db", "hitron"),
         ("docsis_ds_power", "ch:1", "dbmv", "hitron"),
+        ("docsis_ds_corrected", "ch:1", "count", "hitron"),
         ("docsis_ds_uncorrectables", "ch:1", "count", "hitron"),
         ("docsis_ds_power", "ch:2", "dbmv", "hitron"),
         ("docsis_ds_uncorrectables", "ch:2", "count", "hitron"),
@@ -98,6 +114,8 @@ async def test_emits_contract_samples_from_status(frozen_clock: FrozenClock):
         ("modem_uptime_seconds", "modem", "seconds", "hitron"),
         ("modem_link_speed", "modem", "mbps", "hitron"),
         ("modem_registered", "modem", "boolean", "hitron"),
+        ("modem_available", "modem", "boolean", "hitron"),
+        ("modem_poll_latency_ms", "modem", "ms", "hitron"),
     }
     assert all(sample.metric_kind != "wan_downstream_rate" for sample in samples)
     assert (
@@ -185,14 +203,91 @@ async def test_none_fields_emit_no_placeholder_samples(frozen_clock: FrozenClock
         frozen_clock,
     )
 
-    assert await collector.collect() == []
+    samples = await collector.collect()
+    assert {sample.metric_kind for sample in samples} == {
+        "modem_available",
+        "modem_poll_latency_ms",
+    }
 
 
 @pytest.mark.asyncio
 async def test_unreachable_modem_is_missing_data(frozen_clock: FrozenClock):
-    collector = make_collector([None], frozen_clock)
+    collector = make_collector([None], frozen_clock, latency_seconds=0.125)
 
-    assert await collector.collect() == []
+    samples = await collector.collect()
+    assert next(sample for sample in samples if sample.metric_kind == "modem_available").value == 0
+    assert (
+        next(sample for sample in samples if sample.metric_kind == "modem_poll_latency_ms").value
+        == 125
+    )
+
+
+@pytest.mark.asyncio
+async def test_error_rates_use_counter_deltas_and_include_ofdm(frozen_clock: FrozenClock):
+    first = (
+        DownstreamChannel(1, 573000000, 39.5, -1.2, 100, 10, 1_000),
+        DownstreamChannel(1, 599600000, 40.0, 6.6, 1_000, 100, 2_000, "ofdm"),
+    )
+    second = (
+        DownstreamChannel(1, 573000000, 39.5, -1.2, 130, 12, 1_500),
+        DownstreamChannel(1, 599600000, 40.0, 6.6, 1_060, 106, 2_500, "ofdm"),
+    )
+    collector = make_collector(
+        [status(downstream=first), status(downstream=second)],
+        frozen_clock,
+    )
+
+    await collector.collect()
+    frozen_clock.advance(10)
+    samples = await collector.collect()
+
+    rates = {
+        (sample.metric_kind, sample.target): sample.value
+        for sample in samples
+        if sample.metric_kind.endswith("_rate")
+    }
+    assert rates == {
+        ("docsis_ds_corrected_rate", "ch:1"): 3.0,
+        ("docsis_ds_uncorrectable_rate", "ch:1"): 0.2,
+        ("docsis_ds_corrected_rate", "ofdm:1"): 6.0,
+        ("docsis_ds_uncorrectable_rate", "ofdm:1"): 0.6,
+        ("docsis_corrected_rate", "modem"): 9.0,
+        ("docsis_uncorrectable_rate", "modem"): pytest.approx(0.8),
+    }
+
+
+@pytest.mark.asyncio
+async def test_event_log_baselines_then_emits_only_new_sanitized_events(
+    frozen_clock: FrozenClock,
+):
+    old = DocsisEventLogEntry("07/28/26 08:43:34", "82000400", "critical", "T4 time out")
+    new = DocsisEventLogEntry("07/28/26 09:39:49", "82000200", "critical", "T3 time-out")
+    events: list[Event] = []
+    collector = make_collector(
+        [
+            status(event_log=(old,), event_log_available=True),
+            status(event_log=(new, old), event_log_available=True),
+            status(event_log=(new, old), event_log_available=True),
+        ],
+        frozen_clock,
+        events.append,
+    )
+
+    await collector.collect()
+    frozen_clock.advance(30)
+    await collector.collect()
+    frozen_clock.advance(30)
+    await collector.collect()
+
+    assert len(events) == 1
+    assert events[0].kind == "docsis_event"
+    assert events[0].severity == "critical"
+    assert events[0].message == "DOCSIS: T3 time-out"
+    assert events[0].details == {
+        "modem_time": "07/28/26 09:39:49",
+        "type_code": "82000200",
+        "priority": "critical",
+    }
 
 
 def test_burst_interval_applies_during_investigation(frozen_clock: FrozenClock):
