@@ -20,6 +20,8 @@
     metrics: [], alerts: [], health: false, errors: {}, loaded: false, editingDeviceId: null,
     investigation: null, investigationReport: null, investigations: [], investigationDuration: 900,
   };
+  const chartRegistry = new Map();
+  let chartSerial = 0;
 
   const esc = (value) => String(value ?? "").replace(/[&<>"']/g, char => (
     {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[char]
@@ -66,16 +68,69 @@
     if (!values.length) return null;
     return values[Math.min(values.length - 1, Math.floor((values.length - 1) * p))];
   };
-  const svgPath = (rows, width = 600, height = 80, floor = null, ceiling = null) => {
-    if (!rows.length) return `M0 ${height / 2}L${width} ${height / 2}`;
-    const values = rows.map(row => Number(row.value));
-    const min = floor ?? Math.min(...values), max = ceiling ?? Math.max(...values);
-    const range = Math.max(max - min, .001);
-    return values.map((value, index) => {
-      const x = index * width / Math.max(values.length - 1, 1);
-      const y = height - 7 - ((value - min) / range) * (height - 14);
-      return `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`;
+  const chartTime = (seconds, span = 0) => {
+    if (!finite(seconds)) return "—";
+    const date = new Date(Number(seconds) * 1000);
+    const time = date.toLocaleTimeString([], {hour:"2-digit", minute:"2-digit", second:"2-digit"});
+    return span >= 86400
+      ? `${date.toLocaleDateString([], {month:"short", day:"numeric"})} ${time}`
+      : time;
+  };
+  const sumByTimestamp = rows => [...rows.reduce((buckets, row) => {
+    const ts = Number(row.ts), value = Number(row.value);
+    if (Number.isFinite(ts) && Number.isFinite(value)) buckets.set(ts, (buckets.get(ts) || 0) + value);
+    return buckets;
+  }, new Map()).entries()].map(([ts,value]) => ({ts,value})).sort((a,b) => a.ts - b.ts);
+  const nearestRow = (rows, ts) => rows.reduce((nearest, row) =>
+    !nearest || Math.abs(Number(row.ts) - ts) < Math.abs(Number(nearest.ts) - ts) ? row : nearest
+  , null);
+  const interactiveChart = ({
+    datasets, unit = "", valueFormatter = value => `${fmt(value)}${unit ? ` ${unit}` : ""}`,
+    floor = null, ceiling = null, height = 120, reference = null, ariaLabel = "Metric history",
+  }) => {
+    const clean = datasets.map(dataset => ({
+      ...dataset,
+      rows: dataset.rows.filter(row => finite(row.ts) && finite(row.value)),
+    })).filter(dataset => dataset.rows.length);
+    const allRows = clean.flatMap(dataset => dataset.rows);
+    if (!allRows.length) return `<div class="chartbox chart-empty">No samples in this window.</div>`;
+    const times = allRows.map(row => Number(row.ts));
+    const values = allRows.map(row => Number(row.value));
+    const minTs = Math.min(...times), maxTs = Math.max(...times), timeRange = Math.max(maxTs - minTs, 1);
+    const min = floor ?? Math.min(...values);
+    const observedMax = ceiling ?? Math.max(...values, Number(reference?.value || -Infinity));
+    const max = observedMax > min ? observedMax : min + Math.max(Math.abs(min) * .1, 1);
+    const valueRange = Math.max(max - min, .001);
+    const width = 600, padLeft = 58, padRight = 12, padTop = 10, padBottom = 24;
+    const plotWidth = width - padLeft - padRight, plotHeight = height - padTop - padBottom;
+    const x = ts => padLeft + (Number(ts) - minTs) / timeRange * plotWidth;
+    const y = value => padTop + (max - Number(value)) / valueRange * plotHeight;
+    const paths = clean.map(dataset => {
+      const d = dataset.rows.map((row,index) =>
+        `${index ? "L" : "M"}${x(row.ts).toFixed(1)} ${y(row.value).toFixed(1)}`
+      ).join("");
+      return `<path d="${d}" fill="none" stroke="${dataset.color}" stroke-width="${dataset.width || 1.7}" vector-effect="non-scaling-stroke"/>`;
     }).join("");
+    const referenceLine = reference && finite(reference.value)
+      ? `<path d="M${padLeft} ${y(reference.value).toFixed(1)}H${width-padRight}" stroke="${reference.color || "#d8a657"}" stroke-width="1.3" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>`
+      : "";
+    const id = `chart-${++chartSerial}`;
+    const timestamps = [...new Set(allRows.map(row => Number(row.ts)))].sort((a,b) => a-b);
+    chartRegistry.set(id, {datasets:clean, minTs, maxTs, timeRange, valueFormatter, timestamps});
+    const middleTs = minTs + timeRange / 2;
+    const yTicks = [max, min + valueRange / 2, min];
+    return `<div class="chart-wrap">
+      <div class="chart-legend">${clean.map(dataset => `<span><i style="background:${dataset.color}"></i>${esc(dataset.label)}</span>`).join("")}${reference && finite(reference.value) ? `<span><i class="reference-swatch" style="--reference-color:${reference.color || "#d8a657"}"></i>${esc(reference.label || "Reference")}</span>` : ""}<span class="chart-hint">hover or focus to inspect</span></div>
+      <div class="chartbox interactive-chart" id="${id}" data-chart-id="${id}" tabindex="0" role="img" aria-label="${esc(ariaLabel)}" style="--chart-height:${height}px">
+        <svg class="chart" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M${padLeft} ${padTop}H${width-padRight}M${padLeft} ${yTicks[1] === min ? padTop : y(yTicks[1]).toFixed(1)}H${width-padRight}M${padLeft} ${height-padBottom}H${width-padRight}" stroke="#1b2430" vector-effect="non-scaling-stroke"/>
+          ${referenceLine}${paths}<line class="chart-crosshair" x1="${padLeft}" x2="${padLeft}" y1="${padTop}" y2="${height-padBottom}"/>
+        </svg>
+        <div class="chart-y-axis">${yTicks.map(value => `<span>${esc(valueFormatter(value))}</span>`).join("")}</div>
+        <div class="chart-x-axis"><span>${esc(chartTime(minTs,timeRange))}</span><span>${esc(chartTime(middleTs,timeRange))}</span><span>${esc(chartTime(maxTs,timeRange))}</span></div>
+        <div class="chart-tooltip" role="status"></div>
+      </div>
+    </div>`;
   };
   const metricTargets = kind => [...new Set(state.metrics.filter(row => row.kind === kind).map(row => row.target))];
 
@@ -149,7 +204,7 @@
       const fail = Math.min(Number(health.failures || 0), Number(config.outage?.failures_to_open || 3));
       const color = health.open ? "#f4584f" : fail ? "#d8a657" : colors[target] || "#4af6c3";
       return `<div class="probe" style="--probe:${color}"><div class="probe-row"><span class="status-dot" style="background:${color}"></span><span class="probe-name">${esc(target)}</span><span class="probe-proto">icmp</span><span class="probe-value">${value > 0 ? fmt(value) : "—"}</span><span class="unit">ms</span></div>
-        <svg class="spark" viewBox="0 0 300 34" preserveAspectRatio="none" aria-label="${esc(target)} latency"><path d="${svgPath(rows,300,34)}" fill="none" stroke="${color}" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>
+        ${interactiveChart({datasets:[{label:`${target} RTT`,color,rows}],unit:"ms",height:76,ariaLabel:`${target} latency history`})}
         <div class="hyst"><span>hysteresis</span>${[0,1,2].map(i => `<i class="pip ${i < fail ? "fail" : ""}"></i>`).join("")}<span>${fail} / ${config.outage?.failures_to_open || 3} failed cycles</span><span class="push">loss ${finite(loss) ? fmt(loss,0)+"%" : "—"}</span></div></div>`;
     }).join("");
     return panel("Live probes", body, "latest stored samples");
@@ -255,12 +310,15 @@
 
   function diagnosticsScreen() {
     const latencyTargets = metricTargets("latency_rtt_ms");
-    const bands = panel("Latency sparkbands", latencyTargets.length ? latencyTargets.map(target => latencyBand(target)).join("") : `<div class="reason-detail">No latency samples yet.</div>`, "live metric history");
+    const bands = panel("Latency history", latencyTargets.length ? latencyTargets.map(target => latencyBand(target)).join("") : `<div class="reason-detail">No latency samples yet.</div>`, "interactive stored samples");
     const lossRows = state.metrics.filter(row => row.kind === "latency_loss_percent").slice(-120);
+    const lossTimes = lossRows.map(row => Number(row.ts)).filter(Number.isFinite);
+    const lossSpan = lossTimes.length ? Math.max(...lossTimes) - Math.min(...lossTimes) : 0;
     const loss = panel("Packet loss · hit strip", `<div class="loss-strip">${Array.from({length:120},(_,i) => {
-      const value = Number(lossRows[i]?.value || 0); const cls = value >= 100 ? "total" : value > 5 ? "bad" : value > 0 ? "warn" : "";
-      return `<i class="loss-cell ${cls}" title="${fmt(value,0)}%"></i>`;
-    }).join("")}</div><div class="axis"><span>oldest</span><span>newest</span></div><p class="reason-detail">Loss is drawn as strikes. A line spends most of its life pinned to zero and makes a single dropped packet easy to miss.</p>`);
+      const row = lossRows[i - (120 - lossRows.length)];
+      const value = Number(row?.value || 0); const cls = value >= 100 ? "total" : value > 5 ? "bad" : value > 0 ? "warn" : "";
+      return `<i class="loss-cell ${cls}" title="${row ? `${chartTime(row.ts,lossSpan)} · ${fmt(value,0)}% loss · ${esc(row.target)}` : "no sample"}"></i>`;
+    }).join("")}</div><div class="axis"><span>${lossTimes.length ? chartTime(Math.min(...lossTimes),lossSpan) : "no samples"}</span><span>${lossTimes.length ? chartTime(Math.max(...lossTimes),lossSpan) : "no samples"}</span></div><p class="reason-detail">Loss is drawn as strikes. Hover a strike for its time, target, and amount; a line pinned to zero would make a single dropped packet easy to miss.</p>`);
     const dnsTargets = metricTargets("dns_resolution_ms");
     const dns = panel("DNS resolver × name", dnsTargets.length ? dnsTargets.map(target => {
       const rows = series("dns_resolution_ms",target,500), value = rows.at(-1)?.value, p95 = percentile(rows,.95);
@@ -269,7 +327,7 @@
     }).join("") : `<div class="reason-detail">No DNS samples yet.</div>`);
     const httpTargets = metricTargets("http_ttfb_ms"), httpTarget = httpTargets[0];
     const httpRows = httpTarget ? series("http_ttfb_ms",httpTarget,180) : [], httpValue = httpRows.at(-1)?.value, code = latest("http_status_code",httpTarget)?.value;
-    const http = panel("HTTP probe", httpTarget ? `<div style="display:flex;align-items:baseline;gap:8px"><span class="big-value">${fmt(httpValue,0)}</span><span class="unit">ms ttfb</span><span class="chip tone push" style="--tone:${code >= 200 && code < 400 ? "#3fb950" : "#f4584f"}">${fmt(code,0)}</span></div><div class="reason-detail">${esc(httpTarget)}</div><div class="chartbox"><svg class="chart" viewBox="0 0 600 80" preserveAspectRatio="none"><path d="${svgPath(httpRows,600,80)}" fill="none" stroke="#4af6c3" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg></div><div class="metric-stats" style="margin-top:9px"><span>min <strong>${fmt(percentile(httpRows,0))}</strong></span><span>p95 <strong>${fmt(percentile(httpRows,.95))}</strong></span></div>` : `<div class="reason-detail">No HTTP samples yet.</div>`);
+    const http = panel("HTTP probe", httpTarget ? `<div style="display:flex;align-items:baseline;gap:8px"><span class="big-value">${fmt(httpValue,0)}</span><span class="unit">ms ttfb</span><span class="chip tone push" style="--tone:${code >= 200 && code < 400 ? "#3fb950" : "#f4584f"}">${fmt(code,0)}</span></div><div class="reason-detail">${esc(httpTarget)}</div>${interactiveChart({datasets:[{label:"TTFB",color:"#4af6c3",rows:httpRows}],unit:"ms",height:100,ariaLabel:`HTTP response time for ${httpTarget}`})}<div class="metric-stats" style="margin-top:9px"><span>min <strong>${fmt(percentile(httpRows,0))}</strong></span><span>p95 <strong>${fmt(percentile(httpRows,.95))}</strong></span></div>` : `<div class="reason-detail">No HTTP samples yet.</div>`);
     const times = state.metrics.map(row => Number(row.ts)).filter(Number.isFinite), run = times.length ? Math.max(...times)-Math.min(...times) : 0;
     const retention = `<section class="panel dashed"><div class="panel-head"><h2 class="panel-title">⧖ Retention</h2><span class="chip">${config.retention?.raw_days || 7}d raw · ${config.retention?.rollup_5m_days || 365}d rollups</span></div><p class="body-copy">The loaded metric history spans <strong style="color:var(--text)">${duration(run)}</strong>. Charts show only stored samples—no smoothing that invents shape and no axis that implies more history than exists.</p></section>`;
     return `<div class="screen">${bands}${loss}<div class="grid-2">${dns}${http}</div>${docsisLineQualityPanel()}${retention}</div>`;
@@ -304,22 +362,49 @@
 
   function latencyBand(target) {
     const rows = series("latency_rtt_ms",target,300), jitter = series("latency_jitter_ms",target,300), color = colors[target] || "#4af6c3";
-    return `<div class="metric-block"><div class="metric-head"><i class="swatch" style="background:${color}"></i><span>${esc(target)}</span><span class="probe-proto">${target === "gateway" ? "LAN" : "external"}</span><div class="metric-stats"><span>p50 <strong>${fmt(percentile(rows,.5))}</strong></span><span>peak <strong>${fmt(percentile(rows,1))}</strong></span><span>jitter <strong>${fmt(percentile(jitter,.5))}</strong></span></div></div><div class="chartbox"><span class="chart-label">auto scale · ms</span><svg class="chart" viewBox="0 0 600 88" preserveAspectRatio="none"><path d="M0 22H600M0 44H600M0 66H600" stroke="#161d26" vector-effect="non-scaling-stroke"/><path d="${svgPath(rows,600,88)}" fill="none" stroke="${color}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg></div></div>`;
+    return `<div class="metric-block"><div class="metric-head"><i class="swatch" style="background:${color}"></i><span>${esc(target)}</span><span class="probe-proto">${target === "gateway" ? "LAN" : "external"}</span><div class="metric-stats"><span>p50 <strong>${fmt(percentile(rows,.5))}</strong></span><span>peak <strong>${fmt(percentile(rows,1))}</strong></span><span>jitter <strong>${fmt(percentile(jitter,.5))}</strong></span></div></div>${interactiveChart({datasets:[{label:"RTT",color,rows},{label:"Jitter",color:"#8a99a0",rows:jitter,width:1.2}],unit:"ms",height:104,ariaLabel:`Latency and jitter history for ${target}`})}</div>`;
   }
 
   function bandwidthScreen() {
     const modemRows = hitronSeries("wan_downstream_rate", "wan").slice(-240);
-    const wholeHouse = modemRows.length ? panel("Whole-house WAN edge", `<div class="throughput-stats"><div class="stat"><div class="stat-label">down - now</div><div class="stat-value" style="color:var(--mint)">${bytes(modemRows.at(-1)?.value)}</div><div class="stat-note">all devices at modem</div></div><div class="stat"><div class="stat-label">peak down</div><div class="stat-value">${bytes(percentile(modemRows,1))}</div><div class="stat-note">loaded sample window</div></div><div class="stat"><div class="stat-label">samples</div><div class="stat-value">${modemRows.length}</div><div class="stat-note">Hitron DOCSIS counter</div></div></div><div class="chartbox"><svg class="chart tall" viewBox="0 0 600 120" preserveAspectRatio="none"><path d="M0 30H600M0 60H600M0 90H600" stroke="#161d26" vector-effect="non-scaling-stroke"/><path d="${svgPath(modemRows,600,120,0)}" fill="none" stroke="#4af6c3" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg></div><p class="reason-detail">This is every device in the house measured at the WAN edge, not this PC. The modem exposes no upstream byte counter, so there is no upstream equivalent to display.</p>`, "downstream only - hitron source") : panel("Whole-house WAN edge", `<div class="reason-detail">No modem downstream samples yet.</div><p class="reason-detail">The Hitron collector is disabled or has not completed two counter polls. There is no upstream equivalent: the modem exposes no upstream byte counter.</p>`, "no data");
+    const upstreamRows = state.metrics.filter(row => row.kind === "wan_upstream_estimated_rate" && row.target === "wan" && row.source === "eero_cloud" && finite(row.value)).slice(-240);
+    const eeroAvailable = latest("eero_usage_available", "eero");
+    const currentUpstream = eeroAvailable && Number(eeroAvailable.value) === 0 ? null : upstreamRows.at(-1)?.value;
+    const uplinkCapacity = Number(config.investigation?.uplink_mbps || 0) * 125000;
+    const wholeHouseDatasets = [
+      ...(modemRows.length ? [{label:"Download · Hitron WAN counter",color:"#4af6c3",rows:modemRows}] : []),
+      ...(upstreamRows.length ? [{label:"Upload · eero cloud estimate",color:"#d08c60",rows:upstreamRows}] : []),
+    ];
+    const wholeHouse = wholeHouseDatasets.length ? panel("Whole-house WAN edge", `<div class="throughput-stats"><div class="stat"><div class="stat-label">down · now</div><div class="stat-value" style="color:var(--mint)">${bytes(modemRows.at(-1)?.value)}</div><div class="stat-note">Hitron WAN counter</div></div><div class="stat"><div class="stat-label">peak down</div><div class="stat-value">${bytes(percentile(modemRows,1))}</div><div class="stat-note">loaded sample window</div></div><div class="stat"><div class="stat-label">up · now</div><div class="stat-value" style="color:var(--orange)">${bytes(currentUpstream)}</div><div class="stat-note">${eeroAvailable && Number(eeroAvailable.value) === 0 ? "eero cloud currently unavailable" : "eero cloud estimate"}</div></div><div class="stat"><div class="stat-label">peak up</div><div class="stat-value">${bytes(percentile(upstreamRows,1))}</div><div class="stat-note">loaded sample window</div></div></div>${interactiveChart({datasets:wholeHouseDatasets,valueFormatter:bytes,floor:0,height:150,reference:uplinkCapacity > 0 ? {value:uplinkCapacity,label:`Configured uplink capacity · ${fmt(config.investigation.uplink_mbps,0)} Mbps`,color:"#d8a657"} : null,ariaLabel:"Whole-house downstream counter and estimated upstream traffic history"})}<p class="reason-detail">Downstream is measured locally at the Hitron WAN edge. Upstream is an estimate summed from successfully reporting devices by the cloud-dependent eero API; it is not a Hitron or local WAN byte counter.</p>`, "down: hitron counter · up: eero cloud estimate") : panel("Whole-house WAN edge", `<div class="reason-detail">No whole-house throughput samples yet.</div><p class="reason-detail">The Hitron downstream counter and eero cloud upload estimate are disabled, unavailable, or have not completed a poll.</p>`, "no data");
+    const uploaderRows = metricTargets("eero_device_upload_rate").map(target => ({
+      target,
+      row: latest("eero_device_upload_rate", target),
+    })).filter(item => item.row && finite(item.row.value)).sort((left,right) => Number(right.row.value) - Number(left.row.value));
+    const deviceName = target => {
+      const normalized = String(target).toLowerCase();
+      const device = state.devices.find(item => String(item.mac || "").toLowerCase() === normalized);
+      return device?.label || device?.hostname || device?.vendor || target;
+    };
+    let uploaderBody = `<div class="reason-detail">eero cloud usage is disabled or has not completed a poll.</div>`;
+    if (eeroAvailable && Number(eeroAvailable.value) === 0) {
+      uploaderBody = `<div class="reason-detail">eero cloud usage is currently unavailable. Existing device rates are not shown as live.</div>`;
+    } else if (eeroAvailable && !uploaderRows.length) {
+      uploaderBody = `<div class="reason-detail">eero cloud responded, but no devices reported valid upload rates.</div>`;
+    } else if (uploaderRows.length) {
+      uploaderBody = uploaderRows.map((item,index) => `<div class="adapter"><span class="uploader-rank">${index+1}</span><span>${esc(deviceName(item.target))}<div class="stat-note">${esc(item.target)} · eero cloud estimate</div></span><span class="adapter-rate">${bytes(item.row.value)}</span></div>`).join("");
+    }
+    const uploaders = panel("Live uploaders · ranked", uploaderBody, eeroAvailable && Number(eeroAvailable.value) > 0 ? `${uploaderRows.length} devices · latest cloud poll` : "availability unknown");
     const recvTargets = metricTargets("host_nic_bytes_recv_rate"), sentTargets = metricTargets("host_nic_bytes_sent_rate");
     const allTargets = [...new Set([...recvTargets,...sentTargets])];
     const recvRows = state.metrics.filter(r=>r.kind==="host_nic_bytes_recv_rate"), sentRows = state.metrics.filter(r=>r.kind==="host_nic_bytes_sent_rate");
+    const hostDownRows = sumByTimestamp(recvRows).slice(-240), hostUpRows = sumByTimestamp(sentRows).slice(-240);
     const nowDown = recvTargets.reduce((sum,target)=>sum+Number(latest("host_nic_bytes_recv_rate",target)?.value||0),0);
     const nowUp = sentTargets.reduce((sum,target)=>sum+Number(latest("host_nic_bytes_sent_rate",target)?.value||0),0);
-    const host = panel("This PC · throughput", `<div class="throughput-stats"><div class="stat"><div class="stat-label">down · now</div><div class="stat-value" style="color:var(--mint)">${bytes(nowDown)}</div></div><div class="stat"><div class="stat-label">up · now</div><div class="stat-value" style="color:var(--orange)">${bytes(nowUp)}</div></div><div class="stat"><div class="stat-label">peak down</div><div class="stat-value">${bytes(percentile(recvRows,1))}</div></div><div class="stat"><div class="stat-label">adapters</div><div class="stat-value">${allTargets.length}</div></div></div>
-      <div class="chartbox"><svg class="chart tall" viewBox="0 0 600 120" preserveAspectRatio="none"><path d="M0 30H600M0 60H600M0 90H600" stroke="#161d26" vector-effect="non-scaling-stroke"/><path d="${svgPath(recvRows.slice(-240),600,120,0)}" fill="none" stroke="#4af6c3" stroke-width="1.6" vector-effect="non-scaling-stroke"/><path d="${svgPath(sentRows.slice(-240),600,120,0)}" fill="none" stroke="#d08c60" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg></div>`, `${allTargets.length} adapters · host_nic source`);
-    const adapters = panel("Adapters", allTargets.length ? allTargets.map(target => { const down=Number(latest("host_nic_bytes_recv_rate",target)?.value||0),up=Number(latest("host_nic_bytes_sent_rate",target)?.value||0); return `<div class="adapter"><span class="status-dot"></span><span>${esc(target)}<div class="stat-note">host adapter</div></span><span class="adapter-rate">${bytes(down+up)}</span></div>`; }).join("") : `<div class="reason-detail">No adapter rate samples yet.</div>`);
+    const host = panel("This PC · throughput", `<div class="throughput-stats"><div class="stat"><div class="stat-label">down · now</div><div class="stat-value" style="color:var(--mint)">${bytes(nowDown)}</div></div><div class="stat"><div class="stat-label">up · now</div><div class="stat-value" style="color:var(--orange)">${bytes(nowUp)}</div></div><div class="stat"><div class="stat-label">peak down</div><div class="stat-value">${bytes(percentile(hostDownRows,1))}</div></div><div class="stat"><div class="stat-label">adapters</div><div class="stat-value">${allTargets.length}</div></div></div>
+      ${interactiveChart({datasets:[{label:"Download",color:"#4af6c3",rows:hostDownRows},{label:"Upload",color:"#d08c60",rows:hostUpRows}],valueFormatter:bytes,floor:0,height:150,ariaLabel:"This PC upload and download history"})}`, `${allTargets.length} adapters · host_nic source`);
+    const adapters = panel("Adapters", allTargets.length ? allTargets.map(target => { const down=Number(latest("host_nic_bytes_recv_rate",target)?.value||0),up=Number(latest("host_nic_bytes_sent_rate",target)?.value||0); return `<div class="adapter"><span class="status-dot"></span><span>${esc(target)}<div class="stat-note">host adapter</div></span><span class="traffic-pair"><i>↓ ${bytes(down)}</i><i>↑ ${bytes(up)}</i></span></div>`; }).join("") : `<div class="reason-detail">No adapter rate samples yet.</div>`);
     const processes = metricTargets("host_process_bytes_recv_rate");
-    const processPanel = panel("Processes", processes.length ? processes.map(target => `<div class="adapter"><span>${esc(target.split(":").slice(2).join(":"))}</span><span class="adapter-rate">${bytes(Number(latest("host_process_bytes_recv_rate",target)?.value||0)+Number(latest("host_process_bytes_sent_rate",target)?.value||0))}</span></div>`).join("") : `<div class="reason-detail">Per-process network counters are unavailable on this platform or disabled in config.</div>`);
+    const processPanel = panel("Processes", processes.length ? processes.map(target => `<div class="adapter"><span>${esc(target.split(":").slice(2).join(":"))}</span><span class="traffic-pair"><i>↓ ${bytes(latest("host_process_bytes_recv_rate",target)?.value||0)}</i><i>↑ ${bytes(latest("host_process_bytes_sent_rate",target)?.value||0)}</i></span></div>`).join("") : `<div class="reason-detail">Per-process network counters are unavailable on this platform or disabled in config.</div>`);
     const managedNames = config.managed_hosts?.hosts || [];
     const managedReported = metricTargets("managed_host_available");
     const managedHosts = [...new Set([...managedNames, ...managedReported])];
@@ -328,11 +413,11 @@
       const downRows = series("managed_host_nic_bytes_recv_rate", name, 80);
       const upRows = series("managed_host_nic_bytes_sent_rate", name, 80);
       const down = Number(downRows.at(-1)?.value || 0), up = Number(upRows.at(-1)?.value || 0);
-      return `<div class="metric-block"><div class="metric-head"><span class="status-dot ${available ? "" : "down"}"></span><span>${esc(name)}</span><span class="probe-proto">${available ? "available" : "unavailable"}</span><div class="metric-stats"><span>down <strong>${bytes(down)}</strong></span><span>up <strong>${bytes(up)}</strong></span></div></div><div class="chartbox"><svg class="chart" viewBox="0 0 600 54" preserveAspectRatio="none"><path d="${svgPath(downRows,600,54,0)}" fill="none" stroke="#4af6c3" stroke-width="1.5" vector-effect="non-scaling-stroke"/><path d="${svgPath(upRows,600,54,0)}" fill="none" stroke="#d08c60" stroke-width="1.3" vector-effect="non-scaling-stroke"/></svg></div></div>`;
+      return `<div class="metric-block"><div class="metric-head"><span class="status-dot ${available ? "" : "down"}"></span><span>${esc(name)}</span><span class="probe-proto">${available ? "available" : "unavailable"}</span><div class="metric-stats"><span>down <strong>${bytes(down)}</strong></span><span>up <strong>${bytes(up)}</strong></span></div></div>${interactiveChart({datasets:[{label:"Download",color:"#4af6c3",rows:downRows},{label:"Upload",color:"#d08c60",rows:upRows}],valueFormatter:bytes,floor:0,height:108,ariaLabel:`NIC traffic history for ${name}`})}</div>`;
     }).join("") : `<div class="reason-detail">Managed-host telemetry is disabled or has not reported yet.</div>`, `${managedHosts.length} configured/reported · SSH`);
     const managedNote = `<section class="panel dashed"><p class="body-copy">Managed-host rates are cumulative adapter counters read over SSH. They include that device's LAN traffic and are <strong style="color:var(--text)">not total WAN throughput</strong>.</p></section>`;
     const speed = `<section class="panel dashed"><div class="panel-head"><h2 class="panel-title">Speedtest · capacity</h2><span class="chip disabled">⊘ needs write API</span></div><p class="body-copy">Scheduled speedtest is <strong style="color:${config.speedtest?.enabled ? "var(--green)" : "var(--amber)"}">${config.speedtest?.enabled ? "enabled" : "disabled"}</strong>. Capacity is not utilisation, so it is never stacked on the host-traffic axis.</p><button class="btn" disabled>enable speedtest</button></section>`;
-    return `<div class="screen">${wholeHouse}${host}<div class="grid-2">${adapters}${processPanel}</div>${managed}${managedNote}${speed}</div>`;
+    return `<div class="screen">${wholeHouse}${uploaders}${host}<div class="grid-2">${adapters}${processPanel}</div>${managed}${managedNote}${speed}</div>`;
   }
 
   function alertsScreen() {
@@ -385,9 +470,16 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
     const capacity = reference && finite(reference) ? Number(reference) : null;
     const values = rows.map(row => Number(row.value)).filter(Number.isFinite);
     const max = Math.max(capacity || 0, ...values, 1);
-    const path = svgPath(rows, 600, 112, 0, max);
-    const referenceY = capacity === null ? null : 112 - 7 - (capacity / max) * 98;
-    return `<div class="chartbox investigation-chart"><span class="chart-label">${esc(label)}</span><svg class="chart" viewBox="0 0 600 112" preserveAspectRatio="none"><path d="M0 28H600M0 56H600M0 84H600" stroke="#161d26" vector-effect="non-scaling-stroke"/><path d="${path}" fill="none" stroke="${color}" stroke-width="1.7" vector-effect="non-scaling-stroke"/>${referenceY === null ? "" : `<path d="M0 ${referenceY.toFixed(1)}H600" stroke="#d8a657" stroke-width="1.4" stroke-dasharray="5 4" vector-effect="non-scaling-stroke"/>`}</svg></div>`;
+    const isLatency = label.includes("ms");
+    return interactiveChart({
+      datasets:[{label,color,rows}],
+      valueFormatter:isLatency ? value => `${fmt(value)} ms` : bytes,
+      floor:0,
+      ceiling:max,
+      height:132,
+      reference:capacity === null ? null : {value:capacity,color:"#d8a657"},
+      ariaLabel:label,
+    });
   };
   const investigationVerdict = report => report?.verdict ? String(report.verdict).replaceAll("_", " ") : "report unavailable";
   const investigationCoverage = coverage => {
@@ -449,6 +541,8 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
 
   function render() {
     const screens = {now:nowScreen,timeline:timelineScreen,devices:devicesScreen,diagnostics:diagnosticsScreen,bandwidth:bandwidthScreen,alerts:alertsScreen,settings:settingsScreen,investigate:investigateScreen};
+    chartRegistry.clear();
+    chartSerial = 0;
     app.innerHTML = shell((screens[state.route] || nowScreen)());
   }
 
@@ -545,6 +639,64 @@ severity = "warning"</pre></div><p class="reason-detail">The sustained duration 
     const labelEditorOpen = state.route === "devices" && state.editingDeviceId !== null;
     if (["devices","timeline","alerts","investigate"].includes(state.route) && !labelEditorOpen) render();
   }
+
+  function inspectChart(chart, requestedTs) {
+    const spec = chartRegistry.get(chart.dataset.chartId);
+    if (!spec?.timestamps.length) return;
+    const selectedTs = spec.timestamps.reduce((nearest, ts) =>
+      Math.abs(ts - requestedTs) < Math.abs(nearest - requestedTs) ? ts : nearest
+    , spec.timestamps[0]);
+    const ratio = (selectedTs - spec.minTs) / spec.timeRange;
+    const crosshair = chart.querySelector(".chart-crosshair");
+    const tooltip = chart.querySelector(".chart-tooltip");
+    if (!crosshair || !tooltip) return;
+    const x = 58 + ratio * (600 - 58 - 12);
+    crosshair.setAttribute("x1", x.toFixed(1));
+    crosshair.setAttribute("x2", x.toFixed(1));
+    tooltip.style.left = `${58 / 600 * 100 + ratio * (600 - 58 - 12) / 600 * 100}%`;
+    tooltip.style.transform = ratio < .18 ? "translateX(0)" : ratio > .82 ? "translateX(-100%)" : "translateX(-50%)";
+    tooltip.innerHTML = `<strong>${esc(chartTime(selectedTs,spec.timeRange))}</strong>${spec.datasets.map(dataset => {
+      const row = nearestRow(dataset.rows, selectedTs);
+      return `<span><i style="background:${dataset.color}"></i>${esc(dataset.label)} <b>${esc(spec.valueFormatter(row?.value))}</b></span>`;
+    }).join("")}`;
+    chart.dataset.pointIndex = String(spec.timestamps.indexOf(selectedTs));
+    chart.classList.add("inspecting");
+  }
+
+  document.addEventListener("pointermove", event => {
+    const chart = event.target.closest(".interactive-chart");
+    if (!chart) return;
+    const spec = chartRegistry.get(chart.dataset.chartId);
+    if (!spec) return;
+    const rect = chart.getBoundingClientRect();
+    const plotLeft = rect.width * 58 / 600, plotRight = rect.width * 12 / 600;
+    const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left - plotLeft) / Math.max(rect.width - plotLeft - plotRight, 1)));
+    inspectChart(chart, spec.minTs + ratio * spec.timeRange);
+  });
+  document.addEventListener("pointerleave", event => {
+    const chart = event.target.closest?.(".interactive-chart");
+    if (chart && chart !== document.activeElement) chart.classList.remove("inspecting");
+  }, true);
+  document.addEventListener("focusin", event => {
+    const chart = event.target.closest?.(".interactive-chart");
+    const spec = chart && chartRegistry.get(chart.dataset.chartId);
+    if (chart && spec) inspectChart(chart, spec.maxTs);
+  });
+  document.addEventListener("focusout", event => {
+    const chart = event.target.closest?.(".interactive-chart");
+    if (chart) chart.classList.remove("inspecting");
+  });
+  document.addEventListener("keydown", event => {
+    const chart = event.target.closest?.(".interactive-chart");
+    if (!chart || !["ArrowLeft","ArrowRight","Home","End"].includes(event.key)) return;
+    const spec = chartRegistry.get(chart.dataset.chartId);
+    if (!spec?.timestamps.length) return;
+    event.preventDefault();
+    const current = Number(chart.dataset.pointIndex || spec.timestamps.length - 1);
+    const index = event.key === "Home" ? 0 : event.key === "End" ? spec.timestamps.length - 1
+      : Math.max(0, Math.min(spec.timestamps.length - 1, current + (event.key === "ArrowLeft" ? -1 : 1)));
+    inspectChart(chart, spec.timestamps[index]);
+  });
 
   document.addEventListener("click", event => {
     const link = event.target.closest("[data-route]");

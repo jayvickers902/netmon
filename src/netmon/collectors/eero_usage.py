@@ -73,6 +73,14 @@ class EeroUsageCollector(Collector):
             # Devices without rate fields are skipped upstream. Recording how many did report
             # keeps a silent schema change visible: available stays 1 while this sits at 0.
             Sample("eero_devices_reporting", "eero", "count", now, float(len(rates)), "eero_cloud"),
+            Sample(
+                "wan_upstream_estimated_rate",
+                "wan",
+                "bytes_per_second",
+                now,
+                sum(rate.upload_bytes_per_second for rate in rates),
+                "eero_cloud",
+            ),
         ]
         for rate in rates:
             samples.extend(

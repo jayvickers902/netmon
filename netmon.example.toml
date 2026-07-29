@@ -180,6 +180,17 @@ windows_toast = true
 # failures_to_open = 3
 # successes_to_close = 2
 # severity = "warning"
+# Sustained estimated upload near 80% of a 10 Mbps uplink (requires [eero].enabled = true):
+# [[alerts.rules]]
+# name = "uplink nearing capacity"
+# metric_kind = "wan_upstream_estimated_rate"
+# target = "wan"
+# source = "eero_cloud"
+# operator = ">="
+# threshold = 1000000
+# failures_to_open = 2
+# successes_to_close = 2
+# severity = "warning"
 # webhook_url = "https://..."
 
 [throttle]

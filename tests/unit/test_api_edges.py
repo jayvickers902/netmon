@@ -48,4 +48,20 @@ def test_dashboard_routes_and_assets_do_not_expose_secrets(tmp_path):
         assert script.status_code == 200
         assert 'method:"PATCH"' in script.text
         assert "data-label-cancel" in script.text
+        assert "interactiveChart" in script.text
+        assert "chart-x-axis" in script.text
+        assert "pointermove" in script.text
+        assert '["ArrowLeft","ArrowRight","Home","End"]' in script.text
+        assert "wan_upstream_estimated_rate" in script.text
+        assert "up · now" in script.text
+        assert "peak up" in script.text
+        assert "Configured uplink capacity" in script.text
+        assert "eero cloud estimate" in script.text
+        assert "eero cloud currently unavailable" in script.text
+        assert (
+            "const currentUpstream = eeroAvailable && Number(eeroAvailable.value) === 0 ? null"
+            in script.text
+        )
+        assert "Live uploaders · ranked" in script.text
+        assert "not a Hitron or local WAN byte counter" in script.text
         assert "window.prompt" not in script.text

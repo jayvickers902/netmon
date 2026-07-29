@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Whole-house estimated upload tracking now sums successfully reported eero device rates with
+  explicit cloud provenance. The bandwidth dashboard shows current/peak upload, the configured
+  uplink-capacity reference, and ranked live uploaders; the example config documents a sustained
+  80%-of-capacity warning rule.
 - Hitron CODA DOCSIS monitoring: an unauthenticated modem probe and collector for downstream WAN
   rates, channel signal/power/SNR/uncorrectable metrics, upstream power, modem uptime and link
   speed; the `[hitron]` configuration section, committed `tests/fixtures/hitron/` captures,
@@ -56,6 +60,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Dashboard metric charts now use real sample timestamps, labeled X/Y axes, series legends,
+  hover tooltips, and keyboard inspection. Host-NIC chart samples are summed by timestamp
+  across adapters instead of being concatenated into a path that could run backwards in time.
 - Assigned devices now expose a prefilled inline rename editor with explicit Save and Cancel
   controls; browser prompts are no longer used for label changes.
 - eero cloud polling now discovers account networks and follows their advertised device

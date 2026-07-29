@@ -232,6 +232,45 @@ async def test_eero_success_path_tags_every_per_device_sample(frozen_clock):
     }
     counts = {s.metric_kind: s.value for s in samples if s.target == "eero"}
     assert counts == {"eero_usage_available": 1.0, "eero_devices_reporting": 2.0}
+    aggregate = next(
+        sample for sample in samples if sample.metric_kind == "wan_upstream_estimated_rate"
+    )
+    assert aggregate.target == "wan"
+    assert aggregate.unit == "bytes_per_second"
+    assert aggregate.value == 11.0
+    assert aggregate.source == "eero_cloud"
+
+
+@pytest.mark.asyncio
+async def test_eero_success_with_no_reporting_devices_persists_zero_aggregate(frozen_clock):
+    collector = EeroUsageCollector(
+        FakeEeroProbe([]),
+        "secret-token",
+        frozen_clock,
+        EeroConfig(),
+    )
+
+    samples = await collector.collect()
+
+    assert [(sample.metric_kind, sample.value) for sample in samples] == [
+        ("eero_usage_available", 1.0),
+        ("eero_devices_reporting", 0.0),
+        ("wan_upstream_estimated_rate", 0),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_eero_failure_does_not_persist_false_zero_upstream_aggregate(frozen_clock):
+    collector = EeroUsageCollector(
+        FakeEeroProbe(EeroCloudError("offline")),
+        "secret-token",
+        frozen_clock,
+        EeroConfig(),
+    )
+
+    samples = await collector.collect()
+
+    assert [sample.metric_kind for sample in samples] == ["eero_usage_available"]
 
 
 @pytest.mark.asyncio
